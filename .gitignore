@@ -4,37 +4,34 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+.eggs/
+dist/
+build/
 
-# Virtual environments
-venv/
-env/
-ENV/
+# Environment
+.env
+local.env
+*.env.local
 .venv/
-
-# Jupyter Notebook
-.ipynb_checkpoints/
+venv/
+ENV/
 
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
-*.save
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Data & Index (large files)
+data/index/
+data/*.pdf
+data/**/*.pdf
+indices/
 
 # Logs
 logs/
@@ -43,8 +40,11 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
-"System Volume Information"
 
-# Environment variables
-.env
-.env.local
+# Model cache
+.cache/
+models/
+
+# Temp
+*.tmp
+*.bak

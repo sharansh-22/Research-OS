@@ -1,29 +1,68 @@
-from src.rag.pipeline import RAGPipeline
+#!/usr/bin/env python3
+"""Research-OS: Main Entry Point"""
 
-# Initialize pipeline with Phi-3 Mini for generation (CPU-optimized)
-pipeline = RAGPipeline()
+import argparse
+import logging
+from pathlib import Path
 
-# Build index from a sample PDF
-pipeline.build_index("data/terminal.pdf")
+from src.rag import ResearchPipeline, PipelineConfig
 
-# Run a query with RAG
-print("\n" + "="*60)
-print("AI Knowledge Assistant (powered by Phi-3 Mini)")
-print("="*60)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)7s | %(message)s', datefmt='%H:%M:%S')
+logger = logging.getLogger("research-os")
 
-query = input('\nEnter your question: ')
-print("\nThinking...")
 
-result = pipeline.ask(query, k=3)
+def interactive_mode(pipeline: ResearchPipeline):
+    print("\n" + "=" * 60)
+    print("  RESEARCH-OS: Interactive Mode")
+    print("  Type 'quit' to exit, 'stats' for info")
+    print("=" * 60 + "\n")
+    
+    while True:
+        try:
+            q = input("\n🔬 Query: ").strip()
+            if not q:
+                continue
+            if q.lower() in ('quit', 'exit', 'q'):
+                print("Goodbye!")
+                break
+            if q.lower() == 'stats':
+                s = pipeline.get_stats()
+                print(f"\n📊 {s['total_chunks']} chunks | {s['chunk_types']}")
+                continue
+            
+            print("\n⏳ Processing...\n")
+            result = pipeline.query(q)
+            print("=" * 60)
+            print(result.response)
+            print("-" * 60)
+            print(f"📎 {len(result.theory_context)} theory, {len(result.code_context)} code chunks")
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
 
-print("\n" + "-"*60)
-print("ANSWER:")
-print("-"*60)
-print(result["answer"])
 
-print("\n" + "-"*60)
-print("SOURCES:")
-print("-"*60)
-for i, source in enumerate(result["sources"], 1):
-    print(f"\n[{i}] (relevance: {1/(1+source['distance']):.2%})")
-    print(f"    {source['text']}")
+def main():
+    parser = argparse.ArgumentParser(description="Research-OS")
+    parser.add_argument("--query", "-q", help="Single query")
+    parser.add_argument("--index-dir", default="data/index")
+    parser.add_argument("--model", default="qwen2.5-coder:7b")
+    args = parser.parse_args()
+    
+    config = PipelineConfig(index_dir=args.index_dir, model=args.model)
+    pipeline = ResearchPipeline(config)
+    
+    if Path(args.index_dir).exists():
+        try:
+            pipeline.load_index()
+            logger.info(f"Loaded {pipeline.index_size} chunks")
+        except Exception as e:
+            logger.warning(f"No index: {e}")
+    
+    if args.query:
+        print(pipeline.query(args.query).response)
+    else:
+        interactive_mode(pipeline)
+
+
+if __name__ == "__main__":
+    main()
