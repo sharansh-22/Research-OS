@@ -11,10 +11,6 @@
 
 ## The Research Orchestration System for Machine Learning
 
-**Python**  
-**License**  
-**Status**  
-**Backend**
 
 ---
 
