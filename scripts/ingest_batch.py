@@ -21,6 +21,7 @@ def main():
     logger.info("Research-OS Batch Ingestion")
     logger.info("=" * 50)
     
+    # Find PDFs
     pdfs = []
     for d in DATA_DIRS:
         p = Path(d)
@@ -33,10 +34,12 @@ def main():
     
     logger.info(f"Found {len(pdfs)} PDFs")
     
+    # Initialize
     embedder = get_embedder()
     loader = ResearchDocumentLoader()
     retriever = HybridRetriever(embedder=embedder)
     
+    # Process
     total = 0
     for i, pdf in enumerate(pdfs, 1):
         logger.info(f"[{i}/{len(pdfs)}] {pdf.name}")
@@ -47,11 +50,13 @@ def main():
         except Exception as e:
             logger.error(f"  Failed: {e}")
     
+    # Save
     Path(INDEX_DIR).mkdir(parents=True, exist_ok=True)
     retriever.save(INDEX_DIR)
     
     logger.info("=" * 50)
-    logger.info(f"Done! {total} chunks → {INDEX_DIR}")
+    logger.info(f"Done! {total} chunks indexed")
+    logger.info(f"Saved to {INDEX_DIR}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Fast Embedder using FastEmbed"""
+"""Fast Embedder using FastEmbed (all-MiniLM-L6-v2)"""
 
 import numpy as np
 from typing import List, Optional, Union
@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 class FastEmbedder:
+    """Text embedding using FastEmbed."""
+    
     MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
     EMBEDDING_DIM = 384
     
@@ -27,6 +29,7 @@ class FastEmbedder:
         return self._dimension
     
     def embed(self, texts: Union[str, List[str]], normalize: bool = True) -> np.ndarray:
+        """Generate embeddings for texts."""
         if isinstance(texts, str):
             texts = [texts]
         
@@ -43,9 +46,11 @@ class FastEmbedder:
         return embeddings
     
     def embed_query(self, query: str) -> np.ndarray:
+        """Embed single query."""
         return self.embed([query])[0]
     
     def embed_documents(self, documents: List[str]) -> np.ndarray:
+        """Embed multiple documents."""
         return self.embed(documents)
 
 
@@ -53,6 +58,7 @@ _embedder_instance: Optional[FastEmbedder] = None
 
 
 def get_embedder() -> FastEmbedder:
+    """Get or create singleton embedder."""
     global _embedder_instance
     if _embedder_instance is None:
         _embedder_instance = FastEmbedder()

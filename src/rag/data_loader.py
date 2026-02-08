@@ -1,4 +1,6 @@
-"""Research Document Loader - Uses pymupdf4llm"""
+"""
+Research Document Loader - Uses pymupdf4llm (NOT marker-pdf)
+"""
 
 import re
 import hashlib
@@ -65,11 +67,14 @@ class ResearchDocumentLoader:
         self.max_chunk_chars = max_chunk_chars
     
     def load_pdf(self, pdf_path: str | Path) -> List[Chunk]:
+        """Load PDF and return chunks."""
         pdf_path = Path(pdf_path)
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
         
         logger.info(f"Loading PDF: {pdf_path.name}")
+        
+        # Convert PDF to Markdown using pymupdf4llm
         markdown = pymupdf4llm.to_markdown(str(pdf_path))
         
         base_metadata = {
@@ -82,6 +87,7 @@ class ResearchDocumentLoader:
         return chunks
     
     def load_directory(self, dir_path: str | Path, recursive: bool = True) -> List[Chunk]:
+        """Load all PDFs from directory."""
         dir_path = Path(dir_path)
         pattern = "**/*.pdf" if recursive else "*.pdf"
         pdf_files = list(dir_path.glob(pattern))
@@ -99,8 +105,10 @@ class ResearchDocumentLoader:
         return all_chunks
     
     def _parse_markdown(self, markdown: str, base_metadata: Dict) -> List[Chunk]:
+        """Parse markdown into chunks."""
         chunks = []
         
+        # Extract code blocks
         for match in self.CODE_PATTERN.finditer(markdown):
             code = self._clean_code_block(match.group(0))
             if len(code.strip()) >= 50:
@@ -110,17 +118,23 @@ class ResearchDocumentLoader:
                     metadata={**base_metadata, "language": self._detect_language(match.group(0))}
                 ))
         
+        # Remove code blocks for theory processing
         theory_text = self.CODE_PATTERN.sub('', markdown)
+        
+        # Split by sections
         sections = self._split_by_sections(theory_text)
         
         for title, content in sections:
             if len(content.strip()) < self.min_chunk_chars:
                 continue
             
+            # Classify content
             chunk_type = self._classify_content(content)
             
+            # Split large sections
             if len(content) > self.max_chunk_chars:
-                for sub in self._split_large_text(content):
+                sub_chunks = self._split_large_text(content)
+                for sub in sub_chunks:
                     chunks.append(Chunk(
                         content=sub.strip(),
                         chunk_type=chunk_type,
@@ -136,6 +150,7 @@ class ResearchDocumentLoader:
         return chunks
     
     def _split_by_sections(self, text: str) -> List[Tuple[str, str]]:
+        """Split text by headers."""
         sections = []
         current_title = ""
         current_content = []
@@ -156,6 +171,7 @@ class ResearchDocumentLoader:
         return sections if sections else [("", text)]
     
     def _split_large_text(self, text: str) -> List[str]:
+        """Split large text into smaller chunks."""
         paragraphs = text.split('\n\n')
         chunks = []
         current = []
@@ -171,9 +187,11 @@ class ResearchDocumentLoader:
         
         if current:
             chunks.append('\n\n'.join(current))
+        
         return chunks
     
     def _classify_content(self, text: str) -> ChunkType:
+        """Classify chunk type based on content."""
         math_matches = self.MATH_PATTERN.findall(text)
         math_ratio = sum(len(m) for m in math_matches) / len(text) if text else 0
         
@@ -193,6 +211,7 @@ class ResearchDocumentLoader:
         return ChunkType.THEORY
     
     def _clean_code_block(self, code: str) -> str:
+        """Remove markdown code fences."""
         lines = code.strip().split('\n')
         if lines[0].startswith('```'):
             lines = lines[1:]
@@ -201,6 +220,7 @@ class ResearchDocumentLoader:
         return '\n'.join(lines)
     
     def _detect_language(self, code_block: str) -> str:
+        """Detect programming language."""
         first_line = code_block.split('\n')[0]
         match = re.match(r'```(\w+)', first_line)
         if match:
@@ -211,4 +231,6 @@ class ResearchDocumentLoader:
 
 
 def load_research_pdf(path: str | Path) -> List[Chunk]:
+    """Quick function to load a PDF."""
     return ResearchDocumentLoader().load_pdf(path)
+    

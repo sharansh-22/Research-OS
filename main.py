@@ -137,12 +137,13 @@ def main():
         print("   Get key: https://console.groq.com/keys\n")
         return
     
-    # Create pipeline
+    # Create config
     config = PipelineConfig(
         index_dir=args.index_dir,
         enable_fallback=not args.no_fallback,
     )
     
+    # Create pipeline
     try:
         pipeline = ResearchPipeline(config)
     except ValueError as e:
