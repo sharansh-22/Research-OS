@@ -1,9 +1,17 @@
 """Research Pipeline - Full RAG orchestration"""
 
+import os
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 import logging
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from .data_loader import ResearchDocumentLoader, Chunk, ChunkType
 from .embedder import FastEmbedder, get_embedder
@@ -21,11 +29,11 @@ class PipelineConfig:
     min_similarity: float = 0.25
     faiss_weight: float = 0.7
     bm25_weight: float = 0.3
-    model: str = "qwen2.5-coder:7b"
     temperature: float = 0.3
     max_tokens: int = 2048
     verify_code: bool = True
     verification_timeout: int = 10
+    enable_fallback: bool = True
     
     def to_dict(self) -> Dict:
         return self.__dict__.copy()
@@ -41,7 +49,13 @@ class QueryResult:
     generation_metadata: Dict
     
     def to_dict(self) -> Dict:
-        return {"query": self.query, "response": self.response, "context": {"code": self.code_context, "theory": self.theory_context}, "verification": self.verification_results, "metadata": self.generation_metadata}
+        return {
+            "query": self.query,
+            "response": self.response,
+            "context": {"code": self.code_context, "theory": self.theory_context},
+            "verification": self.verification_results,
+            "metadata": self.generation_metadata,
+        }
 
 
 class ResearchPipeline:
@@ -49,10 +63,22 @@ class ResearchPipeline:
         self.config = config or PipelineConfig()
         self.embedder = get_embedder()
         self.loader = ResearchDocumentLoader()
-        self.retriever = HybridRetriever(embedder=self.embedder, faiss_weight=self.config.faiss_weight, bm25_weight=self.config.bm25_weight, min_similarity=self.config.min_similarity)
-        self.generator = ResearchArchitect(model=self.config.model, temperature=self.config.temperature, max_tokens=self.config.max_tokens)
+        self.retriever = HybridRetriever(
+            embedder=self.embedder,
+            faiss_weight=self.config.faiss_weight,
+            bm25_weight=self.config.bm25_weight,
+            min_similarity=self.config.min_similarity,
+        )
+        
+        # Initialize generator (Groq + optional Ollama fallback)
+        self.generator = ResearchArchitect(
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            enable_fallback=self.config.enable_fallback,
+        )
+        
         self.verifier = ArchitectureVerifier(timeout_seconds=self.config.verification_timeout)
-        logger.info("Pipeline ready")
+        logger.info("Pipeline ready (Groq API)")
     
     def ingest_pdf(self, pdf_path: str | Path) -> int:
         chunks = self.loader.load_pdf(pdf_path)
@@ -77,7 +103,14 @@ class ResearchPipeline:
         if do_verify and "```" in gen.response:
             verifs = [v.to_dict() for v in self.verifier.verify_generated_response(gen.response)]
         
-        return QueryResult(question, gen.response, [r.to_dict() for r in code_res], [r.to_dict() for r in theory_res], verifs, gen.to_dict())
+        return QueryResult(
+            question,
+            gen.response,
+            [r.to_dict() for r in code_res],
+            [r.to_dict() for r in theory_res],
+            verifs,
+            gen.to_dict(),
+        )
     
     def save_index(self, path: Optional[str] = None) -> None:
         self.retriever.save(path or self.config.index_dir)
@@ -94,7 +127,16 @@ class ResearchPipeline:
         for c in self.retriever.chunks:
             t = c.chunk_type.value
             types[t] = types.get(t, 0) + 1
-        return {"total_chunks": self.index_size, "chunk_types": types, "config": self.config.to_dict()}
+        
+        # Add backend info
+        backend_status = self.generator.health_check()
+        
+        return {
+            "total_chunks": self.index_size,
+            "chunk_types": types,
+            "backends": backend_status,
+            "config": self.config.to_dict(),
+        }
 
 
 def create_pipeline(index_dir: str = "data/index", load_existing: bool = True) -> ResearchPipeline:
