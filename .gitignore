@@ -28,9 +28,8 @@ ENV/
 *.ipynb_checkpoints
 
 # Data & Index (large files)
-data/index/
-data/*.pdf
-data/**/*.pdf
+data/
+!data/index/
 indices/
 
 # Logs
