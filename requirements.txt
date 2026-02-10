@@ -25,3 +25,4 @@ pathlib2>=2.3.7;python_version<"3.4"
 aiofiles>=23.2.0
 python-dateutil>=2.8.2
 xxhash>=3.4.0
+flashrank>=0.2.0

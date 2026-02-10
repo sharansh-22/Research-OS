@@ -1,13 +1,19 @@
 """
-Research Architect Generator
-============================
+Research Architect Generator with Streaming & Memory
+=====================================================
 Primary: Groq API (llama-3.3-70b-versatile)
 Fallback: Local Ollama (phi3:mini)
+
+Features:
+- Streaming responses for real-time output
+- Short-term memory (conversation history)
+- Non-streaming mode for batch processing
+- Automatic fallback to local LLM
 """
 
 import os
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Generator
 from dataclasses import dataclass
 
 from .retriever import RetrievalResult
@@ -16,23 +22,39 @@ from .data_loader import ChunkType
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# SYSTEM PROMPT
+# =============================================================================
+
 SYSTEM_PROMPT = """You are a Research Architect, an expert AI that bridges mathematical theory and practical implementation.
 
-Use [THEORY] chunks for mathematical foundations and [CODE] chunks for implementations.
+Your role is to synthesize information from two sources:
+1. **[THEORY]** chunks: Mathematical foundations, theorems, definitions, proofs from research papers
+2. **[CODE]** chunks: Working Python/PyTorch implementations from coding guides
+
+When answering:
 - Explain the mathematical intuition FIRST using LaTeX: $inline$ or $$display$$
 - Then show the implementation approach with code blocks
 - Be precise about tensor shapes and dimensions
-- If context is insufficient, say so explicitly."""
+- Highlight common pitfalls
+- If context is insufficient, say so explicitly rather than hallucinating.
 
+You have access to conversation history. Use it to understand follow-up questions and maintain context across turns."""
+
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
 
 @dataclass
 class GenerationResult:
+    """Result container for non-streaming generation."""
     response: str
     model: str
     context_used: Dict[str, int]
     prompt_tokens: int
     response_tokens: int
-    backend: str
+    backend: str  # 'groq', 'ollama_fallback', or 'error'
     
     def to_dict(self) -> Dict:
         return {
@@ -47,11 +69,40 @@ class GenerationResult:
         }
 
 
+@dataclass
+class StreamMetadata:
+    """Metadata returned after streaming completes."""
+    model: str
+    context_used: Dict[str, int]
+    backend: str
+    total_chunks: int
+
+
+# =============================================================================
+# RESEARCH ARCHITECT GENERATOR
+# =============================================================================
+
 class ResearchArchitect:
-    """Research-aware LLM generator with Groq API and Ollama fallback."""
+    """
+    Research-aware LLM generator with streaming and memory support.
     
+    Usage (Streaming with History):
+        >>> architect = ResearchArchitect()
+        >>> history = []
+        >>> for chunk in architect.generate_stream("What is attention?", history=history):
+        ...     print(chunk, end="", flush=True)
+    
+    Usage (Non-Streaming with History):
+        >>> result = architect.generate("Explain further", history=history)
+        >>> print(result.response)
+    """
+    
+    # Model configuration
     GROQ_MODEL = "llama-3.3-70b-versatile"
     FALLBACK_MODEL = "phi3:mini"
+    
+    # Memory configuration
+    MAX_HISTORY_TURNS = 3  # Keep last 3 user-assistant pairs (6 messages)
     
     def __init__(
         self,
@@ -60,6 +111,15 @@ class ResearchArchitect:
         enable_fallback: bool = True,
         groq_api_key: Optional[str] = None,
     ):
+        """
+        Initialize the Research Architect.
+        
+        Args:
+            temperature: Sampling temperature (0.0-1.0)
+            max_tokens: Maximum tokens in response
+            enable_fallback: Enable Ollama fallback if Groq fails
+            groq_api_key: Groq API key (uses GROQ_API_KEY env var if None)
+        """
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.enable_fallback = enable_fallback
@@ -86,7 +146,7 @@ class ResearchArchitect:
         except ImportError:
             raise ImportError("Groq not installed. Run: pip install groq")
         
-        # Initialize fallback
+        # Initialize fallback (lazy)
         self.ollama_client = None
         if self.enable_fallback:
             try:
@@ -96,132 +156,273 @@ class ResearchArchitect:
             except ImportError:
                 logger.warning("Ollama not available for fallback")
     
+    # =========================================================================
+    # CONTEXT FORMATTING
+    # =========================================================================
+    
     def _format_context(
         self,
         code_results: List[RetrievalResult],
         theory_results: List[RetrievalResult],
     ) -> str:
+        """Format retrieved chunks into context string."""
         sections = []
         
         if theory_results:
-            t = "## THEORY Context:\n\n"
-            for i, r in enumerate(theory_results, 1):
-                src = r.chunk.metadata.get('source', 'unknown')
-                content = r.chunk.content[:1500]
-                t += f"### [THEORY-{i}] ({src})\n{content}\n\n"
-            sections.append(t)
+            theory_section = "## Retrieved THEORY Context:\n\n"
+            for i, result in enumerate(theory_results, 1):
+                source = result.chunk.metadata.get('source', 'unknown')
+                score = result.score
+                content = result.chunk.content[:1500]
+                theory_section += f"### [THEORY-{i}] (source: {source}, relevance: {score:.2f})\n"
+                theory_section += f"{content}\n\n"
+            sections.append(theory_section)
         
         if code_results:
-            c = "## CODE Context:\n\n"
-            for i, r in enumerate(code_results, 1):
-                src = r.chunk.metadata.get('source', 'unknown')
-                lang = r.chunk.metadata.get('language', 'python')
-                content = r.chunk.content[:1500]
-                c += f"### [CODE-{i}] ({src})\n```{lang}\n{content}\n```\n\n"
-            sections.append(c)
+            code_section = "## Retrieved CODE Context:\n\n"
+            for i, result in enumerate(code_results, 1):
+                source = result.chunk.metadata.get('source', 'unknown')
+                lang = result.chunk.metadata.get('language', 'python')
+                content = result.chunk.content[:1500]
+                code_section += f"### [CODE-{i}] (source: {source})\n"
+                code_section += f"```{lang}\n{content}\n```\n\n"
+            sections.append(code_section)
         
         return "\n".join(sections)
     
-    def _build_messages(self, query: str, context: str) -> List[Dict[str, str]]:
+    def _build_messages(
+        self,
+        query: str,
+        context: str,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> List[Dict[str, str]]:
+        """
+        Build message list for API call with conversation history.
+        
+        Message order:
+        1. System prompt
+        2. Conversation history (previous turns)
+        3. Current query with context
+        """
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ]
+        
+        # Add conversation history (after system, before current query)
+        if history:
+            # Limit history to last N turns (2 messages per turn)
+            max_messages = self.MAX_HISTORY_TURNS * 2
+            limited_history = history[-max_messages:]
+            messages.extend(limited_history)
+        
+        # Build current user message with context
         if context:
-            user_content = f"""Based on the context below, answer the question.
+            user_content = f"""Based on the retrieved context below, answer the research question.
 
 {context}
 
 ---
-Question: {query}
 
-Instructions:
-1. Explain math using [THEORY] references
-2. Show code using [CODE] references
-3. Be precise about dimensions"""
+## Research Question:
+{query}
+
+## Instructions:
+1. Explain the mathematical foundation using [THEORY] references
+2. Show implementation approach using [CODE] references  
+3. Be precise about dimensions and shapes
+4. Use LaTeX for math notation
+5. Consider our previous conversation for context"""
         else:
-            user_content = f"Question: {query}\n\n(No context retrieved)"
+            user_content = f"""Answer the following research question. Consider our previous conversation for context.
+
+## Research Question:
+{query}
+
+If no specific documents are retrieved, provide a general answer based on your knowledge."""
         
-        return [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
+        messages.append({"role": "user", "content": user_content})
+        
+        return messages
     
-    def _call_groq(self, messages: List[Dict[str, str]]) -> Dict:
-        response = self.groq_client.chat.completions.create(
+    # =========================================================================
+    # STREAMING GENERATION
+    # =========================================================================
+    
+    def generate_stream(
+        self,
+        query: str,
+        code_results: Optional[List[RetrievalResult]] = None,
+        theory_results: Optional[List[RetrievalResult]] = None,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> Generator[str, None, None]:
+        """
+        Generate a streaming response with conversation history.
+        
+        Yields text chunks as they arrive from the API.
+        
+        Args:
+            query: User's research question
+            code_results: Retrieved code chunks
+            theory_results: Retrieved theory chunks
+            history: Conversation history [{"role": "user/assistant", "content": "..."}]
+            
+        Yields:
+            str: Text chunks as they arrive
+        """
+        code_results = code_results or []
+        theory_results = theory_results or []
+        history = history or []
+        
+        # Build context and messages
+        context = self._format_context(code_results, theory_results)
+        messages = self._build_messages(query, context, history)
+        
+        # Try Groq streaming
+        try:
+            yield from self._stream_groq(messages)
+            return
+        except Exception as e:
+            logger.error(f"Groq streaming failed: {e}")
+            
+            # Try Ollama fallback
+            if self.enable_fallback and self.ollama_client:
+                try:
+                    logger.info(f"Falling back to {self.FALLBACK_MODEL}...")
+                    yield from self._stream_ollama(messages)
+                    return
+                except Exception as fallback_error:
+                    logger.error(f"Fallback streaming failed: {fallback_error}")
+                    yield f"\n\n⚠️ Streaming failed: {e}\nFallback also failed: {fallback_error}"
+            else:
+                yield f"\n\n⚠️ Streaming failed: {e}"
+    
+    def _stream_groq(
+        self,
+        messages: List[Dict[str, str]],
+    ) -> Generator[str, None, None]:
+        """Stream from Groq API."""
+        stream = self.groq_client.chat.completions.create(
             model=self.GROQ_MODEL,
             messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            stream=True,
         )
-        return {
-            "content": response.choices[0].message.content,
-            "model": response.model,
-            "prompt_tokens": response.usage.prompt_tokens,
-            "completion_tokens": response.usage.completion_tokens,
-        }
-    
-    def _call_ollama_fallback(self, messages: List[Dict[str, str]]) -> Dict:
-        if not self.ollama_client:
-            raise RuntimeError("Ollama fallback not available")
         
-        response = self.ollama_client.chat(
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+    
+    def _stream_ollama(
+        self,
+        messages: List[Dict[str, str]],
+    ) -> Generator[str, None, None]:
+        """Stream from Ollama (fallback)."""
+        stream = self.ollama_client.chat(
             model=self.FALLBACK_MODEL,
             messages=messages,
-            options={"temperature": self.temperature, "num_predict": self.max_tokens},
+            options={
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
+            },
+            stream=True,
         )
-        return {
-            "content": response['message']['content'],
-            "model": self.FALLBACK_MODEL,
-            "prompt_tokens": response.get('prompt_eval_count', 0),
-            "completion_tokens": response.get('eval_count', 0),
-        }
+        
+        for chunk in stream:
+            if chunk.get('message', {}).get('content'):
+                yield chunk['message']['content']
+    
+    # =========================================================================
+    # NON-STREAMING GENERATION
+    # =========================================================================
     
     def generate(
         self,
         query: str,
         code_results: Optional[List[RetrievalResult]] = None,
         theory_results: Optional[List[RetrievalResult]] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> GenerationResult:
+        """
+        Generate a complete response (non-streaming) with conversation history.
+        
+        Args:
+            query: User's research question
+            code_results: Retrieved code chunks
+            theory_results: Retrieved theory chunks
+            history: Conversation history [{"role": "user/assistant", "content": "..."}]
+            
+        Returns:
+            GenerationResult with full response
+        """
         code_results = code_results or []
         theory_results = theory_results or []
+        history = history or []
         
+        # Build context and messages
         context = self._format_context(code_results, theory_results)
-        messages = self._build_messages(query, context)
+        messages = self._build_messages(query, context, history)
         
         # Try Groq first
         try:
-            result = self._call_groq(messages)
+            response = self.groq_client.chat.completions.create(
+                model=self.GROQ_MODEL,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=False,
+            )
+            
             return GenerationResult(
-                response=result["content"],
-                model=result["model"],
+                response=response.choices[0].message.content,
+                model=response.model,
                 context_used={"code": len(code_results), "theory": len(theory_results)},
-                prompt_tokens=result["prompt_tokens"],
-                response_tokens=result["completion_tokens"],
+                prompt_tokens=response.usage.prompt_tokens,
+                response_tokens=response.usage.completion_tokens,
                 backend="groq",
             )
+            
         except Exception as e:
             logger.error(f"Groq failed: {e}")
             
             # Try fallback
             if self.enable_fallback and self.ollama_client:
                 try:
-                    logger.info(f"Falling back to {self.FALLBACK_MODEL}...")
-                    result = self._call_ollama_fallback(messages)
+                    response = self.ollama_client.chat(
+                        model=self.FALLBACK_MODEL,
+                        messages=messages,
+                        options={
+                            "temperature": self.temperature,
+                            "num_predict": self.max_tokens,
+                        },
+                        stream=False,
+                    )
+                    
                     return GenerationResult(
-                        response=result["content"],
-                        model=result["model"],
+                        response=response['message']['content'],
+                        model=self.FALLBACK_MODEL,
                         context_used={"code": len(code_results), "theory": len(theory_results)},
-                        prompt_tokens=result["prompt_tokens"],
-                        response_tokens=result["completion_tokens"],
+                        prompt_tokens=response.get('prompt_eval_count', 0),
+                        response_tokens=response.get('eval_count', 0),
                         backend="ollama_fallback",
                     )
+                    
                 except Exception as fallback_error:
-                    logger.error(f"Fallback failed: {fallback_error}")
                     return self._error_result(
                         f"Both failed.\nGroq: {e}\nFallback: {fallback_error}",
-                        code_results, theory_results
+                        code_results,
+                        theory_results,
                     )
             
             return self._error_result(str(e), code_results, theory_results)
     
-    def _error_result(self, error_msg: str, code_results: List, theory_results: List) -> GenerationResult:
+    def _error_result(
+        self,
+        error_msg: str,
+        code_results: List,
+        theory_results: List,
+    ) -> GenerationResult:
+        """Create an error result."""
         return GenerationResult(
             response=f"⚠️ Generation Failed\n\n{error_msg}",
             model="none",
@@ -231,7 +432,12 @@ Instructions:
             backend="error",
         )
     
+    # =========================================================================
+    # HEALTH CHECK
+    # =========================================================================
+    
     def health_check(self) -> Dict[str, bool]:
+        """Check connectivity to backends."""
         status = {"groq": False, "ollama_fallback": False}
         
         try:
