@@ -29,6 +29,7 @@ from .pipeline import (
     PipelineConfig,
     QueryResult,
     IngestionResult,
+    StreamChunk,
     create_pipeline,
 )
 
@@ -65,7 +66,8 @@ __all__ = [
     "PipelineConfig",
     "QueryResult",
     "IngestionResult",
+    "StreamChunk",
     "create_pipeline",
 ]
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
