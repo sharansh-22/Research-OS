@@ -1,4 +1,4 @@
-# Python
+# === Python ===
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,50 +8,59 @@ __pycache__/
 .eggs/
 dist/
 build/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
 
-# Environment
+# === Environment & Secrets ===
 .env
-local.env
-*.env.local
+.env.local
 .venv/
 venv/
 ENV/
+# Never commit your GROQ_API_KEY or RESEARCH_OS_API_KEY
+.env*
 
-# IDE
+# === IDEs ===
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Jupyter
+# === Jupyter ===
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# Data & Index (large files)
-data/
-!data/index/
-indices/
+# === Research-OS Specific Data & Index ===
+# Ignore raw data to keep repo size small
+data/01_fundamentals/
+data/02_papers/
+data/03_implementation/
+data/04_misc/
+data/chunks/
 
-# Logs
+# Allow the index directory structure but ignore the actual binary blobs
+# This lets others see WHERE the index goes without downloading 500MB of vectors
+data/index/*
+!data/index/.gitkeep
+# If you want to share a tiny demo index, uncomment the lines below:
+# !data/index/config.json
+# !data/index/processed_files.json
+
+# === RAG & FAISS Temp Files ===
+*.index
+*.pkl
+*.jsonl
+
+# === Logs & System ===
 logs/
 *.log
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Model cache
-.cache/
-models/
-
-# Temp
-*.tmp
-*.bak
-
-# System Files
-System Volume Information/
 __MACOSX/
-.DS_Store
 
-# Backups
-backup_old_src/
+# === Testing & Coverage ===
+.pytest_cache/
+.coverage
+htmlcov/
