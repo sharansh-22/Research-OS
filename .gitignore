@@ -47,3 +47,11 @@ models/
 # Temp
 *.tmp
 *.bak
+
+# System Files
+System Volume Information/
+__MACOSX/
+.DS_Store
+
+# Backups
+backup_old_src/
