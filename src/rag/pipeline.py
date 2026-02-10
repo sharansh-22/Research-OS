@@ -1,13 +1,12 @@
 """
-Research Pipeline - Full RAG Orchestration with Smart Routing
-==============================================================
+Research Pipeline - Full RAG Orchestration with API Support
+============================================================
 Features:
 - Smart Query Router (Intent Classification)
-- Pre-filtering based on query intent (code/theory/hybrid)
-- Incremental indexing with processed files ledger
-- Hybrid search with reranking
-- Groq API generation with streaming
+- Pre-filtering based on query intent
+- Streaming generation (yields JSON-serializable chunks)
 - Short-term conversation memory
+- Incremental indexing
 - Code verification
 """
 
@@ -17,11 +16,10 @@ import json
 import hashlib
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional, Any, Generator, Tuple
+from typing import List, Dict, Optional, Any, Generator, Tuple, Union
 from dataclasses import dataclass
 import logging
 
-# Load environment variables
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -41,113 +39,31 @@ logger = logging.getLogger(__name__)
 # INTENT CLASSIFICATION KEYWORDS
 # =============================================================================
 
-# Keywords indicating CODE intent (case-insensitive)
 CODE_KEYWORDS = [
-    r'\bcode\b',
-    r'\bpython\b',
-    r'\bimplementation\b',
-    r'\bimplement\b',
-    r'\bimpl\b',
-    r'\bclass\b',
-    r'\bdef\b',
-    r'\bfunction\b',
-    r'\bfunctions\b',
-    r'\bapi\b',
-    r'\bscript\b',
-    r'\bnotebook\b',
-    r'\bpytorch\b',
-    r'\btensorflow\b',
-    r'\bnumpy\b',
-    r'\btorch\b',
-    r'\bkeras\b',
-    r'\bjax\b',
-    r'\bscipy\b',
-    r'\bsklearn\b',
-    r'\bpandas\b',
-    r'\bmodule\b',
-    r'\blibrary\b',
-    r'\bpackage\b',
-    r'\bsnippet\b',
-    r'\bexample code\b',
-    r'\bcode example\b',
-    r'\bhow to code\b',
-    r'\bwrite code\b',
-    r'\bshow me code\b',
-    r'\bgive me code\b',
-    r'\bsyntax\b',
-    r'\bmethod\b',
-    r'\bcuda\b',
-    r'\bgpu\b',
-    r'\btensor\b',
-    r'\barray\b',
-    r'\bmatrix operations\b',
-    r'\bdebug\b',
-    r'\berror\b',
-    r'\bbug\b',
-    r'\bfix\b',
+    r'\bcode\b', r'\bpython\b', r'\bimplementation\b', r'\bimplement\b',
+    r'\bimpl\b', r'\bclass\b', r'\bdef\b', r'\bfunction\b', r'\bfunctions\b',
+    r'\bapi\b', r'\bscript\b', r'\bnotebook\b', r'\bpytorch\b', r'\btensorflow\b',
+    r'\bnumpy\b', r'\btorch\b', r'\bkeras\b', r'\bjax\b', r'\bscipy\b',
+    r'\bsklearn\b', r'\bpandas\b', r'\bmodule\b', r'\blibrary\b', r'\bpackage\b',
+    r'\bsnippet\b', r'\bexample code\b', r'\bcode example\b', r'\bhow to code\b',
+    r'\bwrite code\b', r'\bshow me code\b', r'\bgive me code\b', r'\bsyntax\b',
+    r'\bmethod\b', r'\bcuda\b', r'\bgpu\b', r'\btensor\b', r'\barray\b',
+    r'\bdebug\b', r'\berror\b', r'\bbug\b', r'\bfix\b',
 ]
 
-# Keywords indicating THEORY intent (case-insensitive)
 THEORY_KEYWORDS = [
-    r'\bmath\b',
-    r'\bmathematics\b',
-    r'\bmathematical\b',
-    r'\btheory\b',
-    r'\btheoretical\b',
-    r'\bproof\b',
-    r'\bproofs\b',
-    r'\bprove\b',
-    r'\bequation\b',
-    r'\bequations\b',
-    r'\bderive\b',
-    r'\bderivation\b',
-    r'\bderivations\b',
-    r'\bformula\b',
-    r'\bformulas\b',
-    r'\bformulae\b',
-    r'\btheorem\b',
-    r'\btheorems\b',
-    r'\blemma\b',
-    r'\bdefinition\b',
-    r'\bdefinitions\b',
-    r'\bdefine\b',
-    r'\bconcept\b',
-    r'\bconcepts\b',
-    r'\bconceptual\b',
-    r'\bwhy does\b',
-    r'\bwhy is\b',
-    r'\bwhy do\b',
-    r'\bhow does\b',
-    r'\bhow is\b',
-    r'\bexplain\b',
-    r'\bexplanation\b',
-    r'\bunderstand\b',
-    r'\bunderstanding\b',
-    r'\bintuition\b',
-    r'\bintuitively\b',
-    r'\bfundamental\b',
-    r'\bfundamentals\b',
-    r'\bprinciple\b',
-    r'\bprinciples\b',
-    r'\baxiom\b',
-    r'\bcorollary\b',
-    r'\bproposition\b',
-    r'\bnotation\b',
-    r'\bsymbols\b',
-    r'\blatex\b',
-    r'\balgebra\b',
-    r'\bcalculus\b',
-    r'\bprobability\b',
-    r'\bstatistics\b',
-    r'\blinear algebra\b',
-    r'\bgradient\b',
-    r'\bloss function\b',
-    r'\bobjective function\b',
-    r'\boptimization theory\b',
-    r'\bconvergence\b',
+    r'\bmath\b', r'\bmathematics\b', r'\bmathematical\b', r'\btheory\b',
+    r'\btheoretical\b', r'\bproof\b', r'\bproofs\b', r'\bprove\b',
+    r'\bequation\b', r'\bequations\b', r'\bderive\b', r'\bderivation\b',
+    r'\bformula\b', r'\bformulas\b', r'\btheorem\b', r'\btheorems\b',
+    r'\blemma\b', r'\bdefinition\b', r'\bdefine\b', r'\bconcept\b',
+    r'\bconcepts\b', r'\bwhy does\b', r'\bwhy is\b', r'\bhow does\b',
+    r'\bexplain\b', r'\bexplanation\b', r'\bunderstand\b', r'\bintuition\b',
+    r'\bfundamental\b', r'\bprinciple\b', r'\baxiom\b', r'\bcorollary\b',
+    r'\bnotation\b', r'\blatex\b', r'\balgebra\b', r'\bcalculus\b',
+    r'\bprobability\b', r'\bstatistics\b', r'\bgradient\b', r'\bconvergence\b',
 ]
 
-# Compile patterns for efficiency
 CODE_PATTERN = re.compile('|'.join(CODE_KEYWORDS), re.IGNORECASE)
 THEORY_PATTERN = re.compile('|'.join(THEORY_KEYWORDS), re.IGNORECASE)
 
@@ -159,47 +75,23 @@ THEORY_PATTERN = re.compile('|'.join(THEORY_KEYWORDS), re.IGNORECASE)
 @dataclass
 class PipelineConfig:
     """Configuration for Research Pipeline."""
-    # Index settings
     index_dir: str = "data/index"
     top_k: int = 5
     min_similarity: float = 0.25
     faiss_weight: float = 0.7
     bm25_weight: float = 0.3
-    
-    # Generation settings
     temperature: float = 0.3
     max_tokens: int = 2048
     enable_fallback: bool = True
-    
-    # Memory settings
     max_history_turns: int = 3
-    
-    # Smart routing settings
-    enable_smart_routing: bool = True  # Enable/disable intent classification
-    
-    # Verification settings
+    enable_smart_routing: bool = True
     verify_code: bool = True
     verification_timeout: int = 10
-    
-    # Ledger settings
     ledger_filename: str = "processed_files.json"
     use_file_hash: bool = True
     
     def to_dict(self) -> Dict:
-        return {
-            "index_dir": self.index_dir,
-            "top_k": self.top_k,
-            "min_similarity": self.min_similarity,
-            "faiss_weight": self.faiss_weight,
-            "bm25_weight": self.bm25_weight,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "enable_fallback": self.enable_fallback,
-            "max_history_turns": self.max_history_turns,
-            "enable_smart_routing": self.enable_smart_routing,
-            "verify_code": self.verify_code,
-            "verification_timeout": self.verification_timeout,
-        }
+        return {k: v for k, v in self.__dict__.items()}
     
     @property
     def ledger_path(self) -> Path:
@@ -219,17 +111,14 @@ class QueryResult:
     theory_context: List[Dict]
     verification_results: List[Dict]
     generation_metadata: Dict
-    intent: str = "hybrid"  # Detected intent
+    intent: str = "hybrid"
     
     def to_dict(self) -> Dict:
         return {
             "query": self.query,
             "response": self.response,
             "intent": self.intent,
-            "context": {
-                "code": self.code_context,
-                "theory": self.theory_context,
-            },
+            "context": {"code": self.code_context, "theory": self.theory_context},
             "verification": self.verification_results,
             "metadata": self.generation_metadata,
         }
@@ -245,39 +134,47 @@ class IngestionResult:
     processing_time: float = 0.0
 
 
+@dataclass
+class StreamChunk:
+    """A single chunk from streaming response."""
+    event: str  # 'start', 'chunk', 'context', 'done', 'error'
+    data: Optional[str] = None
+    intent: Optional[str] = None
+    code_count: Optional[int] = None
+    theory_count: Optional[int] = None
+    error: Optional[str] = None
+    
+    def to_json(self) -> str:
+        d = {"event": self.event}
+        if self.data is not None:
+            d["data"] = self.data
+        if self.intent is not None:
+            d["intent"] = self.intent
+        if self.code_count is not None:
+            d["code"] = self.code_count
+        if self.theory_count is not None:
+            d["theory"] = self.theory_count
+        if self.error is not None:
+            d["error"] = self.error
+        return json.dumps(d)
+
+
 # =============================================================================
-# RESEARCH PIPELINE WITH SMART ROUTING
+# RESEARCH PIPELINE
 # =============================================================================
 
 class ResearchPipeline:
-    """
-    Complete RAG pipeline with Smart Query Routing.
-    
-    Features:
-    - Intent classification (code/theory/hybrid)
-    - Pre-filtering based on query intent
-    - Hybrid search with reranking
-    - Streaming generation
-    - Short-term conversation memory
-    - Incremental indexing
-    - Code verification
-    """
+    """Complete RAG pipeline with Smart Query Routing and API support."""
     
     def __init__(self, config: Optional[PipelineConfig] = None):
         self.config = config or PipelineConfig()
         
         logger.info("Initializing Research Pipeline...")
-        
-        # Ensure index directory exists
         Path(self.config.index_dir).mkdir(parents=True, exist_ok=True)
         
-        # Initialize embedder
         self.embedder = get_embedder()
-        
-        # Initialize document loader
         self.loader = ResearchDocumentLoader()
         
-        # Initialize retriever
         self.retriever = HybridRetriever(
             embedder=self.embedder,
             faiss_weight=self.config.faiss_weight,
@@ -285,49 +182,30 @@ class ResearchPipeline:
             min_similarity=self.config.min_similarity,
         )
         
-        # Initialize generator
         self.generator = ResearchArchitect(
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             enable_fallback=self.config.enable_fallback,
         )
         
-        # Initialize verifier
         self.verifier = ArchitectureVerifier(
             timeout_seconds=self.config.verification_timeout
         )
         
-        # Load processed files ledger
         self._processed_files: Dict[str, Dict] = {}
         self.load_processed_log()
         
-        logger.info("✓ Pipeline ready (Smart Routing enabled)")
+        logger.info("✓ Pipeline ready (Smart Routing + API Support)")
     
     # =========================================================================
-    # INTENT CLASSIFICATION (SMART QUERY ROUTER)
+    # INTENT CLASSIFICATION
     # =========================================================================
     
-    def _classify_intent(self, query: str) -> Tuple[str, Dict[str, bool]]:
-        """
-        Classify query intent using keyword matching.
-        
-        Args:
-            query: User's query string
-            
-        Returns:
-            Tuple of (intent, debug_info)
-            - intent: "code", "theory", or "hybrid"
-            - debug_info: Dict with matched keywords info
-        """
-        # Check for code keywords
+    def _classify_intent(self, query: str) -> Tuple[str, Dict[str, Any]]:
+        """Classify query intent using keyword matching."""
         code_matches = CODE_PATTERN.findall(query)
-        has_code_intent = len(code_matches) > 0
-        
-        # Check for theory keywords
         theory_matches = THEORY_PATTERN.findall(query)
-        has_theory_intent = len(theory_matches) > 0
         
-        # Build debug info
         debug_info = {
             "code_matches": code_matches,
             "theory_matches": theory_matches,
@@ -335,47 +213,33 @@ class ResearchPipeline:
             "theory_count": len(theory_matches),
         }
         
-        # Classification logic
-        if has_code_intent and has_theory_intent:
-            # Ambiguous - both types of keywords present
-            # Use the one with more matches, or default to hybrid
+        has_code = len(code_matches) > 0
+        has_theory = len(theory_matches) > 0
+        
+        if has_code and has_theory:
             if len(code_matches) > len(theory_matches) * 1.5:
                 intent = "code"
             elif len(theory_matches) > len(code_matches) * 1.5:
                 intent = "theory"
             else:
-                intent = "hybrid"  # Safety first
-        elif has_code_intent:
+                intent = "hybrid"
+        elif has_code:
             intent = "code"
-        elif has_theory_intent:
+        elif has_theory:
             intent = "theory"
         else:
-            intent = "hybrid"  # Default for unclassified queries
+            intent = "hybrid"
         
         debug_info["intent"] = intent
-        
-        logger.debug(
-            f"Intent classified: '{query[:50]}...' → {intent} "
-            f"(code:{len(code_matches)}, theory:{len(theory_matches)})"
-        )
-        
         return intent, debug_info
     
     def classify_intent(self, query: str) -> str:
-        """
-        Public method to classify query intent.
-        
-        Args:
-            query: User's query string
-            
-        Returns:
-            Intent string: "code", "theory", or "hybrid"
-        """
+        """Public method to classify query intent."""
         intent, _ = self._classify_intent(query)
         return intent
     
     # =========================================================================
-    # QUERY WITH SMART ROUTING
+    # QUERY METHODS
     # =========================================================================
     
     def query(
@@ -383,24 +247,13 @@ class ResearchPipeline:
         question: str,
         history: Optional[List[Dict[str, str]]] = None,
         verify: Optional[bool] = None,
-        filter_type: Optional[str] = None,  # Override auto-classification
+        filter_type: Optional[str] = None,
     ) -> QueryResult:
-        """
-        Execute a RAG query with smart routing.
-        
-        Args:
-            question: User's question
-            history: Conversation history
-            verify: Override code verification setting
-            filter_type: Override intent classification ("code", "theory", "hybrid")
-            
-        Returns:
-            QueryResult with response and metadata
-        """
+        """Execute a non-streaming RAG query."""
         history = history or []
         do_verify = verify if verify is not None else self.config.verify_code
         
-        # Classify intent (or use override)
+        # Classify intent
         if filter_type:
             intent = filter_type
         elif self.config.enable_smart_routing:
@@ -408,9 +261,7 @@ class ResearchPipeline:
         else:
             intent = "hybrid"
         
-        logger.info(f"Query intent: {intent}")
-        
-        # Retrieve with intent-based filtering
+        # Retrieve
         results = self.retriever.search_by_type_filtered(
             query=question,
             top_k=self.config.top_k,
@@ -419,7 +270,7 @@ class ResearchPipeline:
         code_results = results.get("code", [])
         theory_results = results.get("theory", [])
         
-        # Generate with history
+        # Generate
         gen_result = self.generator.generate(
             query=question,
             code_results=code_results,
@@ -427,7 +278,7 @@ class ResearchPipeline:
             history=history,
         )
         
-        # Verify code blocks (if present)
+        # Verify
         verifications = []
         if do_verify and "```" in gen_result.response:
             verifications = [
@@ -450,53 +301,77 @@ class ResearchPipeline:
         question: str,
         history: Optional[List[Dict[str, str]]] = None,
         filter_type: Optional[str] = None,
-    ) -> Generator[str, None, Dict]:
+        yield_json: bool = False,
+    ) -> Generator[Union[str, StreamChunk], None, None]:
         """
-        Execute a streaming RAG query with smart routing.
+        Execute a streaming RAG query.
         
         Args:
             question: User's question
             history: Conversation history
             filter_type: Override intent classification
+            yield_json: If True, yields JSON strings; else yields StreamChunk objects
             
         Yields:
-            str: Response chunks
+            Either JSON strings or StreamChunk objects
         """
         history = history or []
         
-        # Classify intent
-        if filter_type:
-            intent = filter_type
-        elif self.config.enable_smart_routing:
-            intent, _ = self._classify_intent(question)
-        else:
-            intent = "hybrid"
-        
-        # Retrieve with filtering
-        results = self.retriever.search_by_type_filtered(
-            query=question,
-            top_k=self.config.top_k,
-            filter_type=intent,
-        )
-        code_results = results.get("code", [])
-        theory_results = results.get("theory", [])
-        
-        # Stream generation with history
-        yield from self.generator.generate_stream(
-            query=question,
-            code_results=code_results,
-            theory_results=theory_results,
-            history=history,
-        )
+        try:
+            # Classify intent
+            if filter_type:
+                intent = filter_type
+            elif self.config.enable_smart_routing:
+                intent, _ = self._classify_intent(question)
+            else:
+                intent = "hybrid"
+            
+            # Yield start event
+            start_chunk = StreamChunk(event="start", intent=intent)
+            yield start_chunk.to_json() if yield_json else start_chunk
+            
+            # Retrieve
+            results = self.retriever.search_by_type_filtered(
+                query=question,
+                top_k=self.config.top_k,
+                filter_type=intent,
+            )
+            code_results = results.get("code", [])
+            theory_results = results.get("theory", [])
+            
+            # Yield context event
+            context_chunk = StreamChunk(
+                event="context",
+                code_count=len(code_results),
+                theory_count=len(theory_results),
+            )
+            yield context_chunk.to_json() if yield_json else context_chunk
+            
+            # Stream generation
+            for token in self.generator.generate_stream(
+                query=question,
+                code_results=code_results,
+                theory_results=theory_results,
+                history=history,
+            ):
+                token_chunk = StreamChunk(event="chunk", data=token)
+                yield token_chunk.to_json() if yield_json else token_chunk
+            
+            # Yield done event
+            done_chunk = StreamChunk(event="done")
+            yield done_chunk.to_json() if yield_json else done_chunk
+            
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            error_chunk = StreamChunk(event="error", error=str(e))
+            yield error_chunk.to_json() if yield_json else error_chunk
     
     # =========================================================================
     # LEDGER MANAGEMENT
     # =========================================================================
     
     def load_processed_log(self) -> Dict[str, Dict]:
-        """Load the processed files ledger from disk."""
         ledger_path = self.config.ledger_path
-        
         if ledger_path.exists():
             try:
                 with open(ledger_path, 'r') as f:
@@ -508,21 +383,17 @@ class ResearchPipeline:
                 self._processed_files = {}
         else:
             self._processed_files = {}
-        
         return self._processed_files
     
     def save_processed_log(self) -> None:
-        """Save the processed files ledger to disk."""
         ledger_path = self.config.ledger_path
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        
         data = {
             "version": "1.0",
             "last_updated": datetime.now().isoformat(),
             "total_files": len(self._processed_files),
             "files": self._processed_files,
         }
-        
         try:
             with open(ledger_path, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -530,25 +401,19 @@ class ResearchPipeline:
             logger.error(f"Failed to save ledger: {e}")
     
     def is_processed(self, pdf_path: str | Path) -> bool:
-        """Check if a file has already been processed."""
         pdf_path = Path(pdf_path)
         filename = pdf_path.name
-        
         if filename not in self._processed_files:
             return False
-        
         if self.config.use_file_hash:
             stored_hash = self._processed_files[filename].get("file_hash")
             current_hash = self._compute_file_hash(pdf_path)
             if stored_hash != current_hash:
                 return False
-        
         return True
     
     def mark_processed(self, pdf_path: str | Path, chunks_added: int) -> None:
-        """Mark a file as processed in the ledger."""
         pdf_path = Path(pdf_path)
-        
         self._processed_files[pdf_path.name] = {
             "path": str(pdf_path.absolute()),
             "processed_at": datetime.now().isoformat(),
@@ -556,20 +421,16 @@ class ResearchPipeline:
             "file_hash": self._compute_file_hash(pdf_path) if self.config.use_file_hash else None,
             "file_size": pdf_path.stat().st_size,
         }
-        
         self.save_processed_log()
     
     def clear_processed_log(self) -> None:
-        """Clear the processed files ledger."""
         self._processed_files = {}
         self.save_processed_log()
     
     def get_processed_files(self) -> List[str]:
-        """Get list of processed filenames."""
         return list(self._processed_files.keys())
     
     def _compute_file_hash(self, pdf_path: Path) -> str:
-        """Compute MD5 hash of file."""
         try:
             hasher = hashlib.md5()
             with open(pdf_path, 'rb') as f:
@@ -583,12 +444,7 @@ class ResearchPipeline:
     # INGESTION
     # =========================================================================
     
-    def ingest_pdf(
-        self,
-        pdf_path: str | Path,
-        force: bool = False,
-    ) -> IngestionResult:
-        """Ingest a single PDF with incremental indexing."""
+    def ingest_pdf(self, pdf_path: str | Path, force: bool = False) -> IngestionResult:
         import time
         start_time = time.time()
         
@@ -618,7 +474,6 @@ class ResearchPipeline:
                 f"Added {len(chunks)} chunks",
                 processing_time=time.time() - start_time
             )
-            
         except Exception as e:
             logger.error(f"Failed to process {filename}: {e}")
             return IngestionResult(
@@ -632,7 +487,6 @@ class ResearchPipeline:
         recursive: bool = True,
         force: bool = False,
     ) -> List[IngestionResult]:
-        """Ingest all files from directory."""
         dir_path = Path(dir_path)
         pattern = "**/*" if recursive else "*"
         
@@ -655,21 +509,18 @@ class ResearchPipeline:
     # =========================================================================
     
     def save_index(self, path: Optional[str] = None) -> None:
-        """Save index to disk."""
         save_path = path or self.config.index_dir
         self.retriever.save(save_path)
         self.save_processed_log()
         logger.info(f"Index saved to {save_path}")
     
     def load_index(self, path: Optional[str] = None) -> None:
-        """Load index from disk."""
         load_path = path or self.config.index_dir
         self.retriever = HybridRetriever.load(load_path, self.embedder)
         self.load_processed_log()
         logger.info(f"Index loaded from {load_path}")
     
     def rebuild_index(self, data_dirs: List[str | Path]) -> Dict[str, Any]:
-        """Rebuild index from scratch."""
         self.retriever.clear()
         self.clear_processed_log()
         
@@ -693,11 +544,9 @@ class ResearchPipeline:
     
     @property
     def index_size(self) -> int:
-        """Number of chunks in index."""
         return self.retriever.size
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get pipeline statistics."""
         types = {}
         for c in self.retriever.chunks:
             t = c.chunk_type.value
@@ -715,21 +564,19 @@ class ResearchPipeline:
         }
     
     def clear_index(self) -> None:
-        """Clear the index and ledger."""
         self.retriever.clear()
         self.clear_processed_log()
         logger.info("Index and ledger cleared")
 
 
 # =============================================================================
-# FACTORY FUNCTION
+# FACTORY
 # =============================================================================
 
 def create_pipeline(
     index_dir: str = "data/index",
     load_existing: bool = True,
 ) -> ResearchPipeline:
-    """Factory function to create pipeline."""
     config = PipelineConfig(index_dir=index_dir)
     pipeline = ResearchPipeline(config)
     
