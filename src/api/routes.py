@@ -4,16 +4,17 @@ Research-OS API Routes
 All HTTP endpoints for the Research-OS backend.
 
 Endpoints:
-    POST /v1/chat          — Streaming chat (SSE)
-    POST /v1/ingest/file   — Upload and ingest a file
-    POST /v1/ingest/url    — Download and ingest from URL
-    GET  /health           — System health and stats
+    POST /v1/chat          - Streaming chat (SSE)
+    POST /v1/ingest/file   - Upload and ingest a file
+    POST /v1/ingest/url    - Download and ingest from URL
+    GET  /v1/ingest/status - All ingestion task statuses
+    GET  /v1/ingest/status/{task_id} - Single task status
+    GET  /health           - System health and stats
 """
 
 import os
 import logging
 import time
-import shutil
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -27,10 +28,11 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from .dependencies import verify_api_key, PipelineState
+from .ingestion_tracker import tracker, IngestionStage
 
 logger = logging.getLogger(__name__)
 
@@ -40,44 +42,17 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 class ChatRequest(BaseModel):
-    """Request body for /v1/chat."""
-    query: str = Field(
-        ...,
-        min_length=1,
-        max_length=5000,
-        description="The research question to ask",
-        examples=["Explain the math behind self-attention"],
-    )
-    history: List[Dict[str, str]] = Field(
-        default_factory=list,
-        description="Conversation history as [{role, content}, ...]",
-        examples=[[
-            {"role": "user", "content": "What is dropout?"},
-            {"role": "assistant", "content": "Dropout is a regularization technique..."},
-        ]],
-    )
-    filter_type: Optional[str] = Field(
-        default=None,
-        description="Override intent classification: 'code', 'theory', or 'hybrid'",
-        pattern="^(code|theory|hybrid)$",
-    )
+    query: str = Field(..., min_length=1, max_length=5000)
+    history: List[Dict[str, str]] = Field(default_factory=list)
+    filter_type: Optional[str] = Field(default=None, pattern="^(code|theory|hybrid)$")
 
 
 class IngestURLRequest(BaseModel):
-    """Request body for /v1/ingest/url."""
-    url: str = Field(
-        ...,
-        description="URL of the file to download and ingest",
-        examples=["https://arxiv.org/pdf/1706.03762v5"],
-    )
-    filename: Optional[str] = Field(
-        default=None,
-        description="Override filename (auto-detected from URL if omitted)",
-    )
+    url: str = Field(...)
+    filename: Optional[str] = Field(default=None)
 
 
 class IngestResponse(BaseModel):
-    """Response for ingest endpoints."""
     status: str
     message: str
     filename: Optional[str] = None
@@ -85,7 +60,6 @@ class IngestResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Response for /health."""
     status: str
     version: str
     index_chunks: int
@@ -102,58 +76,20 @@ router = APIRouter()
 
 
 # =============================================================================
-# POST /v1/chat — Streaming Chat (SSE)
+# POST /v1/chat
 # =============================================================================
 
-@router.post(
-    "/v1/chat",
-    summary="Streaming Research Chat",
-    description=(
-        "Send a research question and receive a Server-Sent Events stream. "
-        "Events: `start`, `context`, `chunk` (tokens), `done`, `error`."
-    ),
-    response_description="SSE stream of JSON events",
-    tags=["Chat"],
-)
-async def chat(
-    request: ChatRequest,
-    _api_key: str = Depends(verify_api_key),
-):
-    """
-    Streaming RAG endpoint.
-    
-    Consumes `pipeline.query_stream(yield_json=True)` which yields
-    JSON strings with event types: start, context, chunk, done, error.
-    
-    Each SSE `data:` field is a JSON object:
-        {"event": "start", "intent": "hybrid"}
-        {"event": "context", "code": 3, "theory": 5}
-        {"event": "chunk", "data": "The attention"}
-        {"event": "chunk", "data": " mechanism works"}
-        {"event": "done"}
-    """
+@router.post("/v1/chat", tags=["Chat"])
+async def chat(request: ChatRequest, _api_key: str = Depends(verify_api_key)):
     pipeline = PipelineState.get()
-    
-    # Validate history format
+
     for i, msg in enumerate(request.history):
         if "role" not in msg or "content" not in msg:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"history[{i}] must have 'role' and 'content' keys",
-            )
+            raise HTTPException(status_code=422, detail=f"history[{i}] must have 'role' and 'content'")
         if msg["role"] not in ("user", "assistant"):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"history[{i}].role must be 'user' or 'assistant'",
-            )
-    
+            raise HTTPException(status_code=422, detail=f"history[{i}].role must be 'user' or 'assistant'")
+
     def event_generator():
-        """
-        Sync generator that yields SSE-formatted strings.
-        
-        pipeline.query_stream(yield_json=True) returns JSON strings
-        from StreamChunk.to_json(). We yield them directly as SSE data.
-        """
         try:
             for json_str in pipeline.query_stream(
                 question=request.query,
@@ -165,85 +101,66 @@ async def chat(
         except Exception as e:
             logger.error(f"SSE stream error: {e}", exc_info=True)
             import json
-            error_payload = json.dumps({"event": "error", "error": str(e)})
-            yield {"data": error_payload}
-    
+            yield {"data": json.dumps({"event": "error", "error": str(e)})}
+
     return EventSourceResponse(event_generator())
 
 
 # =============================================================================
-# POST /v1/ingest/file — Upload File
+# POST /v1/ingest/file
 # =============================================================================
 
 UPLOAD_DIR = Path("data/04_misc")
 
 
-def _run_ingest_file(file_path: Path):
-    """Background task: ingest a single file into the pipeline."""
+def _run_ingest_file(file_path: Path, task_id: str):
     try:
+        tracker.update_task(task_id, IngestionStage.PARSING, 0.2)
+
         pipeline = PipelineState.get()
+
+        tracker.update_task(task_id, IngestionStage.EMBEDDING, 0.4)
+
         result = pipeline.ingest_pdf(file_path, force=False)
-        
+
         if result.status == "processed":
+            tracker.update_task(task_id, IngestionStage.INDEXING, 0.8, chunks=result.chunks_added)
             pipeline.save_index()
-            logger.info(
-                f"Ingestion complete: {result.filename} — "
-                f"{result.chunks_added} chunks in {result.processing_time:.1f}s"
-            )
+            tracker.update_task(task_id, IngestionStage.COMPLETE, 1.0, chunks=result.chunks_added)
+            logger.info(f"Ingestion complete: {result.filename} - {result.chunks_added} chunks")
+        elif result.status == "skipped":
+            tracker.update_task(task_id, IngestionStage.COMPLETE, 1.0)
+            logger.info(f"Ingestion skipped: {result.filename} - already processed")
         else:
-            logger.warning(f"Ingestion result: {result.filename} — {result.status}: {result.message}")
-            
+            tracker.update_task(task_id, IngestionStage.FAILED, error=result.message)
+            logger.warning(f"Ingestion failed: {result.filename} - {result.message}")
+
     except Exception as e:
+        tracker.update_task(task_id, IngestionStage.FAILED, error=str(e))
         logger.error(f"Background ingest failed for {file_path}: {e}", exc_info=True)
 
 
-@router.post(
-    "/v1/ingest/file",
-    response_model=IngestResponse,
-    summary="Upload & Ingest File",
-    description="Upload a document file. Ingestion runs as a background task.",
-    tags=["Ingest"],
-)
+@router.post("/v1/ingest/file", response_model=IngestResponse, tags=["Ingest"])
 async def ingest_file(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(
-        ...,
-        description="Document file to ingest (PDF, .py, .md, .tex, .ipynb, etc.)",
-    ),
+    file: UploadFile = File(...),
     _api_key: str = Depends(verify_api_key),
 ):
-    """
-    Accept a file upload, save to data/04_misc/, and queue ingestion.
-    
-    Supported formats: .pdf, .py, .ipynb, .md, .tex, .cpp, .cu, .c, .h, .txt
-    """
-    # Validate extension
     from src.rag.data_loader import UniversalLoader
     supported = UniversalLoader.supported_extensions()
-    
+
     suffix = Path(file.filename).suffix.lower()
     if suffix not in supported:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type: '{suffix}'. Supported: {supported}",
-        )
-    
-    # Validate file is not empty
+        raise HTTPException(status_code=415, detail=f"Unsupported: '{suffix}'. Supported: {supported}")
+
     contents = await file.read()
     if len(contents) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded file is empty.",
-        )
-    
-    # Save file
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    
-    # Sanitize filename
-    safe_name = Path(file.filename).name  # Strip directory traversal
+    safe_name = Path(file.filename).name
     dest_path = UPLOAD_DIR / safe_name
-    
-    # Handle duplicate filenames
+
     if dest_path.exists():
         stem = dest_path.stem
         suffix_ext = dest_path.suffix
@@ -251,57 +168,53 @@ async def ingest_file(
         while dest_path.exists():
             dest_path = UPLOAD_DIR / f"{stem}_{counter}{suffix_ext}"
             counter += 1
-    
+
     try:
         with open(dest_path, "wb") as f:
             f.write(contents)
     except IOError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save file: {e}",
-        )
-    
-    # Queue background ingestion
-    background_tasks.add_task(_run_ingest_file, dest_path)
-    
-    logger.info(f"File saved: {dest_path} ({len(contents)} bytes) — ingestion queued")
-    
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    task_id = tracker.create_task(safe_name)
+    background_tasks.add_task(_run_ingest_file, dest_path, task_id)
+
+    logger.info(f"File saved: {dest_path} ({len(contents)} bytes) - task {task_id}")
+
     return IngestResponse(
         status="queued",
-        message=f"File '{safe_name}' saved and queued for ingestion.",
+        message=f"File '{safe_name}' queued for ingestion.",
         filename=str(dest_path),
+        task_id=task_id,
     )
 
 
 # =============================================================================
-# POST /v1/ingest/url — Download & Ingest from URL
+# POST /v1/ingest/url
 # =============================================================================
 
-def _run_ingest_url(url: str, filename: Optional[str] = None):
-    """Background task: download file from URL and ingest."""
-    import requests
-    
+def _run_ingest_url(url: str, filename: Optional[str], task_id: str):
+    import requests as req
+
     try:
-        # Determine filename
+        tracker.update_task(task_id, IngestionStage.DOWNLOADING, 0.1)
+
         if filename:
             safe_name = Path(filename).name
         else:
-            # Extract from URL
             from urllib.parse import urlparse, unquote
             parsed = urlparse(url)
             url_filename = unquote(Path(parsed.path).name)
             safe_name = url_filename if url_filename and '.' in url_filename else "downloaded_paper.pdf"
-        
-        # Download
+
         logger.info(f"Downloading: {url}")
-        response = requests.get(url, timeout=120, stream=True)
+        response = req.get(url, timeout=120, stream=True)
         response.raise_for_status()
-        
-        # Save
+
+        tracker.update_task(task_id, IngestionStage.DOWNLOADING, 0.3)
+
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         dest_path = UPLOAD_DIR / safe_name
-        
-        # Handle duplicates
+
         if dest_path.exists():
             stem = dest_path.stem
             suffix_ext = dest_path.suffix
@@ -309,99 +222,108 @@ def _run_ingest_url(url: str, filename: Optional[str] = None):
             while dest_path.exists():
                 dest_path = UPLOAD_DIR / f"{stem}_{counter}{suffix_ext}"
                 counter += 1
-        
+
         with open(dest_path, "wb") as f:
             for data_chunk in response.iter_content(chunk_size=8192):
                 f.write(data_chunk)
-        
-        file_size = dest_path.stat().st_size
-        logger.info(f"Downloaded: {dest_path} ({file_size} bytes)")
-        
-        # Ingest
-        _run_ingest_file(dest_path)
-        
-    except requests.RequestException as e:
-        logger.error(f"Download failed for {url}: {e}")
+
+        logger.info(f"Downloaded: {dest_path} ({dest_path.stat().st_size} bytes)")
+
+        _run_ingest_file(dest_path, task_id)
+
     except Exception as e:
+        tracker.update_task(task_id, IngestionStage.FAILED, error=str(e))
         logger.error(f"URL ingest failed for {url}: {e}", exc_info=True)
 
 
-@router.post(
-    "/v1/ingest/url",
-    response_model=IngestResponse,
-    summary="Download & Ingest from URL",
-    description="Provide a URL to a document. Download and ingestion run as background tasks.",
-    tags=["Ingest"],
-)
+@router.post("/v1/ingest/url", response_model=IngestResponse, tags=["Ingest"])
 async def ingest_url(
     request: IngestURLRequest,
     background_tasks: BackgroundTasks,
     _api_key: str = Depends(verify_api_key),
 ):
-    """Download a file from URL and queue it for ingestion."""
-    
-    background_tasks.add_task(_run_ingest_url, request.url, request.filename)
-    
-    logger.info(f"URL ingest queued: {request.url}")
-    
+    display_name = request.filename or request.url.split("/")[-1] or "download"
+    task_id = tracker.create_task(display_name)
+    background_tasks.add_task(_run_ingest_url, request.url, request.filename, task_id)
+
+    logger.info(f"URL ingest queued: {request.url} - task {task_id}")
+
     return IngestResponse(
         status="queued",
-        message=f"Download from '{request.url}' queued for ingestion.",
+        message=f"Download from '{request.url}' queued.",
         filename=request.filename,
+        task_id=task_id,
     )
 
 
 # =============================================================================
-# GET /health — System Health
+# GET /v1/ingest/status
 # =============================================================================
 
-@router.get(
-    "/health",
-    response_model=HealthResponse,
-    summary="System Health Check",
-    description="Returns system status, index size, and backend connectivity.",
-    tags=["System"],
-)
+@router.get("/v1/ingest/status", tags=["Ingest"])
+async def ingest_status_all(_api_key: str = Depends(verify_api_key)):
+    return {"tasks": tracker.get_all()}
+
+
+@router.get("/v1/ingest/status/{task_id}", tags=["Ingest"])
+async def ingest_status(task_id: str, _api_key: str = Depends(verify_api_key)):
+    task = tracker.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task.to_dict()
+
+
+# =============================================================================
+# GET /v1/index/files
+# =============================================================================
+
+@router.get("/v1/index/files", tags=["Index"])
+async def index_files(_api_key: str = Depends(verify_api_key)):
+    pipeline = PipelineState.get()
+    return {
+        "files": pipeline.get_processed_files(),
+        "total": len(pipeline.get_processed_files()),
+        "chunks": pipeline.index_size,
+    }
+
+
+# =============================================================================
+# GET /health
+# =============================================================================
+
+@router.get("/health", response_model=HealthResponse, tags=["System"])
 async def health():
-    """
-    Public endpoint (no auth required).
-    Returns pipeline stats and backend availability.
-    """
     if not PipelineState.is_ready():
         return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=503,
             content={
-                "status": "unavailable",
-                "version": "2.0.0",
-                "index_chunks": 0,
-                "indexed_files": 0,
+                "status": "unavailable", "version": "2.1.0",
+                "index_chunks": 0, "indexed_files": 0,
                 "backends": {"groq": False, "ollama_fallback": False},
                 "smart_routing": False,
             },
         )
-    
+
     pipeline = PipelineState.get()
-    
+
     try:
         stats = pipeline.get_stats()
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=503,
             content={
-                "status": "degraded",
-                "version": "2.0.0",
+                "status": "degraded", "version": "2.1.0",
                 "index_chunks": pipeline.index_size,
                 "indexed_files": len(pipeline.get_processed_files()),
                 "backends": {"groq": False, "ollama_fallback": False},
                 "smart_routing": False,
-                "error": str(e),
             },
         )
-    
+
     return HealthResponse(
         status="healthy",
-        version="2.0.0",
+        version="2.1.0",
         index_chunks=stats["total_chunks"],
         indexed_files=stats["processed_files"],
         backends=stats["backends"],

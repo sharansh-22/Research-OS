@@ -1,190 +1,212 @@
 # Research-OS — Command Reference
 # ================================
+# Version 2.1.0 | Single source of truth for all operations
 
 # =============================================================================
-# 0. ENVIRONMENT SETUP (Run once)
+# 0. QUICK START (One Command)
 # =============================================================================
 
-# Activate your conda/venv environment
+# Start everything — backend, frontend, opens browser
+python webrun.py                              # Ctrl+C stops everything
+
+# =============================================================================
+# 1. ENVIRONMENT SETUP (First time only)
+# =============================================================================
+
+# Activate environment
 conda activate Research-OS                    # or: source venv/bin/activate
 
 # Install all dependencies
-pip install -r requirements.txt               # installs RAG + API + test deps
+pip install -r requirements.txt               # RAG + API packages
 
-# Set required environment variables (add to .env or export manually)
-export GROQ_API_KEY="gsk_..."                 # LLM backend — required for generation
-export RESEARCH_OS_API_KEY="your-secret-key"  # API auth — required for API endpoints
+# Frontend dependencies
+cd frontend && npm install && cd ..           # React + Tailwind packages
 
-# =============================================================================
-# 1. CLI MODE (No server needed)
-# =============================================================================
-
-# Interactive mode — streaming ON, memory ON, smart routing ON
-python main.py                                # launches the REPL chat loop
-
-# Interactive mode — disable streaming (full response at once)
-python main.py --no-stream                    # useful for copy-pasting long answers
-
-# Single query — streaming
-python main.py -q "What is self-attention?"   # prints answer + sources, then exits
-
-# Single query — no streaming
-python main.py -q "Explain backpropagation" --no-stream
-
-# Verbose logging — see retrieval scores, intent classification, etc.
-python main.py -v                             # sets log level to DEBUG
-
-# Custom index directory
-python main.py --index-dir data/custom_index  # use a different FAISS index
-
-# Disable Ollama fallback (Groq only)
-python main.py --no-fallback                  # skip local LLM if Groq fails
-
-# Combine flags
-python main.py -v --no-stream --no-fallback   # debug mode, no stream, no fallback
+# Set environment variables (add to .env or export)
+export GROQ_API_KEY="gsk_..."                 # required — LLM generation
+export RESEARCH_OS_API_KEY="your-secret-key"  # required — API authentication
 
 # =============================================================================
-# 2. API SERVER
+# 2. SYSTEM VERIFICATION
 # =============================================================================
 
-# Start the API server (default: 0.0.0.0:8000)
-python run_api.py                             # production mode, single worker
-
-# Start with auto-reload (development mode — restarts on code changes)
-python run_api.py --reload                    # watches src/ for file changes
-
-# Custom host and port
-python run_api.py --port 8080                 # run on port 8080
-python run_api.py --host 127.0.0.1            # localhost only (not exposed)
-python run_api.py --host 0.0.0.0 --port 9000  # exposed on port 9000
-
-# Multiple workers (production — cannot use with --reload)
-python run_api.py --workers 4                 # 4 uvicorn workers
-
-# Debug logging
-python run_api.py --log-level debug           # verbose API + pipeline logs
+# Full 22-section system check (run before anything)
+python verify_setup.py                        # checks env, packages, files, index, imports, network
 
 # =============================================================================
-# 3. API ENDPOINTS (while server is running)
+# 3. WEB MODE (Frontend + Backend)
 # =============================================================================
 
-# Health check — no auth required
-curl http://localhost:8000/health              # returns index size, backend status
+# One command — starts backend, frontend, opens browser
+python webrun.py                              # everything on autopilot
 
-# Root info
-curl http://localhost:8000/                    # returns service name, version, doc links
+# Or start separately in two terminals:
 
-# Swagger docs — interactive API playground
-# Open in browser: http://localhost:8000/docs
+# Terminal 1: Backend
+python run_api.py                             # FastAPI on :8000
 
-# ReDoc — clean API documentation
-# Open in browser: http://localhost:8000/redoc
+# Terminal 2: Frontend
+cd frontend && npm run dev                    # Vite on :5173
 
-# Chat (streaming SSE) — requires API key
+# Then open: http://localhost:5173
+
+# Backend options:
+python run_api.py --reload                    # auto-restart on code changes
+python run_api.py --port 8080                 # custom port
+python run_api.py --host 127.0.0.1            # localhost only
+python run_api.py --workers 4                 # multiple workers (no --reload)
+python run_api.py --log-level debug           # verbose logging
+
+# =============================================================================
+# 4. CLI MODE (No server needed)
+# =============================================================================
+
+# Interactive mode — streaming, memory, smart routing all ON
+python main.py                                # launches REPL chat loop
+
+# Single query
+python main.py -q "What is self-attention?"   # prints answer + sources, exits
+
+# Flags
+python main.py --no-stream                    # full response at once
+python main.py --no-fallback                  # Groq only, skip Ollama
+python main.py -v                             # verbose/debug logging
+python main.py --index-dir data/custom_index  # custom index path
+
+# Combine
+python main.py -v --no-stream --no-fallback
+
+# Interactive commands (inside REPL):
+#   stats    — index statistics
+#   health   — backend connectivity
+#   stream   — toggle streaming
+#   history  — show conversation memory
+#   clear    — clear conversation
+#   intent   — test query classification
+#   quit     — exit
+
+# =============================================================================
+# 5. API ENDPOINTS (curl examples)
+# =============================================================================
+
+# Health — no auth required
+curl http://localhost:8000/health
+
+# Swagger docs — open in browser
+# http://localhost:8000/docs
+
+# Chat (SSE streaming)
 curl -N -X POST http://localhost:8000/v1/chat \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $RESEARCH_OS_API_KEY" \
   -d '{"query": "What is self-attention?"}'
 
-# Chat with conversation history
+# Chat with history
 curl -N -X POST http://localhost:8000/v1/chat \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $RESEARCH_OS_API_KEY" \
-  -d '{"query": "Explain that more simply", "history": [{"role": "user", "content": "What is self-attention?"}, {"role": "assistant", "content": "Self-attention is..."}]}'
+  -d '{"query": "Explain that simply", "history": [{"role": "user", "content": "What is attention?"}, {"role": "assistant", "content": "Attention is..."}]}'
 
-# Chat with intent filter override
+# Chat with intent override
 curl -N -X POST http://localhost:8000/v1/chat \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $RESEARCH_OS_API_KEY" \
   -d '{"query": "Show me attention", "filter_type": "code"}'
 
-# Upload and ingest a file — background task
+# Upload file
 curl -X POST http://localhost:8000/v1/ingest/file \
   -H "X-API-Key: $RESEARCH_OS_API_KEY" \
   -F "file=@path/to/paper.pdf"
 
-# Ingest from URL — background task
+# Ingest from URL
 curl -X POST http://localhost:8000/v1/ingest/url \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $RESEARCH_OS_API_KEY" \
   -d '{"url": "https://arxiv.org/pdf/1706.03762v5", "filename": "attention.pdf"}'
 
-# =============================================================================
-# 4. TESTING
-# =============================================================================
+# Check ingestion progress
+curl http://localhost:8000/v1/ingest/status \
+  -H "X-API-Key: $RESEARCH_OS_API_KEY"
 
-# Full API test suite (24 tests — server must be running)
-python test_api_complete.py                   # tests health, auth, chat, ingest, docs
-
-# Quick curl smoke tests (server must be running)
-bash test_curl.sh                             # 8 curl commands with formatted output
-
-# Visual streaming test — watch tokens arrive live
-python test_stream_visual.py                  # prints tokens in real-time
-
-# Pytest (if you have unit tests in tests/)
-pytest tests/ -v                              # run all unit tests
-pytest tests/ -v --cov=src                    # with coverage report
+# List indexed files
+curl http://localhost:8000/v1/index/files \
+  -H "X-API-Key: $RESEARCH_OS_API_KEY"
 
 # =============================================================================
-# 5. DATA INGESTION (CLI — no server needed)
+# 6. DATA INGESTION (CLI — no server needed)
 # =============================================================================
 
-# Batch ingest — process all PDFs in data/ directories
-python scripts/ingest_batch.py                # uses scripts/ingest_batch.py
+# Batch ingest all files in data/ directories
+python scripts/ingest_batch.py                # incremental (skips processed)
+python scripts/ingest_batch.py --force         # reprocess everything
+python scripts/ingest_batch.py --rebuild       # clear index and rebuild
+python scripts/ingest_batch.py --status        # check what's indexed
+python scripts/ingest_batch.py --data-dir data/02_papers  # specific directory
 
-# Auto download — fetch papers from configured sources
-python scripts/auto_download.py               # uses scripts/auto_download.py
+# Download papers
+python scripts/auto_download.py --url "https://arxiv.org/pdf/..."
+python scripts/auto_download.py --url "..." --folder 02_papers
+python scripts/auto_download.py --dry-run      # preview without saving
 
-# Download specific data
-python scripts/download_data.py               # uses scripts/download_data.py
-
-# =============================================================================
-# 6. NOTEBOOKS (Jupyter)
-# =============================================================================
-
-# Launch Jupyter for interactive exploration
-jupyter notebook                              # opens browser with notebook list
-
-# Key notebooks:
-#   notebooks/1-text-extraction.ipynb         # test PDF parsing
-#   notebooks/2-embedding.ipynb               # test embedding + retrieval
+# View ingestion ledger
+cat data/index/processed_files.json
 
 # =============================================================================
-# 7. DIAGNOSTICS
+# 7. OLLAMA (Local LLM Fallback)
 # =============================================================================
 
-# Check what metadata your chunks contain
-python check_metadata.py                      # prints chunk metadata keys + values
+# Start server
+ollama serve
 
-# Diagnose index issues (FAISS scores, BM25 status)
-python diagnose_index.py                      # raw FAISS search + BM25 check
+# Manage models
+ollama list                                   # show installed
+ollama pull phi3:mini                         # download fallback model
+ollama pull llama3.2:3b                       # alternative model
+ollama rm <model_name>                        # remove model
 
-# Analyze query logs
-python Analyze-logs.py                        # reads logs/queries.jsonl
+# Test
+ollama run phi3:mini "Hello"
 
 # =============================================================================
-# 8. COMMON WORKFLOWS
+# 8. GIT
 # =============================================================================
 
-# --- Workflow A: Fresh start (first time) ---
-# 1. pip install -r requirements.txt
-# 2. export GROQ_API_KEY="gsk_..."
-# 3. python scripts/ingest_batch.py           # index your PDFs
-# 4. python main.py                           # start chatting
+git status
+git add .
+git commit -m "your message"
+git push origin main
+git pull origin main
 
-# --- Workflow B: Start API for frontend ---
-# 1. export GROQ_API_KEY="gsk_..."
-# 2. export RESEARCH_OS_API_KEY="secret"
-# 3. python run_api.py                        # server on :8000
-# 4. python test_api_complete.py              # verify everything works
+# =============================================================================
+# 9. COMMON WORKFLOWS
+# =============================================================================
+
+# --- Workflow A: Daily use ---
+# 1. python webrun.py                         # starts everything, opens browser
+# 2. Ask questions in the UI
+# 3. Ctrl+C when done
+
+# --- Workflow B: First time setup ---
+# 1. conda activate Research-OS
+# 2. pip install -r requirements.txt
+# 3. cd frontend && npm install && cd ..
+# 4. cp .env.example .env                     # edit with your keys
+# 5. python scripts/ingest_batch.py           # index your PDFs
+# 6. python verify_setup.py                   # confirm everything works
+# 7. python webrun.py                         # launch
 
 # --- Workflow C: Add new papers ---
 # 1. Copy PDFs to data/02_papers/
-# 2. python scripts/ingest_batch.py           # re-index
-# 3. python main.py -q "What does the new paper say about X?"
+# 2. python scripts/ingest_batch.py           # re-index (incremental)
+# 3. python webrun.py                         # query the new content
 
-# --- Workflow D: Development with hot reload ---
+# --- Workflow D: CLI only (no web) ---
+# 1. conda activate Research-OS
+# 2. python main.py                           # interactive chat
+# 3. Or: python main.py -q "your question"    # single query
+
+# --- Workflow E: Development ---
 # 1. python run_api.py --reload --log-level debug
-# 2. Edit code in src/ — server auto-restarts
-# 3. python test_api_complete.py              # re-test after changes
+# 2. cd frontend && npm run dev               # in second terminal
+# 3. Edit code — both servers auto-restart
+# 4. python verify_setup.py                   # re-verify after changes
