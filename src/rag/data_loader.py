@@ -68,9 +68,11 @@ class Chunk:
             self.chunk_id = hashlib.md5(self.content.encode()).hexdigest()[:12]
     
     def to_dict(self) -> Dict:
-        """Convert to standardized output format."""
+        """Convert to standardized output format (Pydantic V1/Manual compatibility)."""
         return {
+            "content": self.content,
             "text": self.content,
+            "type": self.chunk_type.value,
             "metadata": {
                 "source": self.metadata.get("source", "unknown"),
                 "type": self.chunk_type.value,
@@ -78,11 +80,10 @@ class Chunk:
                 **{k: v for k, v in self.metadata.items() if k != "source"}
             }
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict) -> "Chunk":
-        """Reconstruct from dictionary."""
-        # Handle both old and new format
+        """Reconstruct from dictionary (Pydantic V1/Manual compatibility)."""
         if "text" in data:
             content = data["text"]
             metadata = data.get("metadata", {})
@@ -96,8 +97,17 @@ class Chunk:
             content=content,
             chunk_type=ChunkType(chunk_type_str),
             metadata=metadata,
-            chunk_id=metadata.get("chunk_id", ""),
+            chunk_id=metadata.get("chunk_id", data.get("chunk_id", "")),
         )
+
+    def model_dump(self) -> Dict:
+        """Pydantic V2 compatibility shim."""
+        return self.to_dict()
+
+    @classmethod
+    def model_validate(cls, data: Dict) -> "Chunk":
+        """Pydantic V2 compatibility shim."""
+        return cls.from_dict(data)
 
 
 # =============================================================================

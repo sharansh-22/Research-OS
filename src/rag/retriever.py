@@ -51,6 +51,25 @@ class RetrievalResult:
             "chunk_id": self.chunk.chunk_id,
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict) -> "RetrievalResult":
+        """Reconstruct from dictionary."""
+        return cls(
+            chunk=Chunk.from_dict(data),
+            score=data.get("score", 0.0),
+            rank=data.get("rank", 0),
+            source=data.get("source", "unknown")
+        )
+
+    def model_dump(self) -> Dict:
+        """Pydantic V2 compatibility shim."""
+        return self.to_dict()
+
+    @classmethod
+    def model_validate(cls, data: Dict) -> "RetrievalResult":
+        """Pydantic V2 compatibility shim."""
+        return cls.from_dict(data)
+
 
 # =============================================================================
 # HYBRID RETRIEVER WITH SMART FILTERING
@@ -256,7 +275,9 @@ class HybridRetriever:
         chunk_type: Optional[ChunkType] = None,
         method: str = "hybrid",
         use_reranking: Optional[bool] = None,
-        filter_type: str = "hybrid",  # NEW: Intent-based filtering
+        filter_type: str = "hybrid",  # Intent-based filtering
+        faiss_weight: Optional[float] = None, # Dynamic weight override
+        bm25_weight: Optional[float] = None,  # Dynamic weight override
     ) -> List[RetrievalResult]:
         """
         Search for relevant chunks with intent-based filtering.
@@ -268,6 +289,8 @@ class HybridRetriever:
             method: Search method ('hybrid', 'faiss', 'bm25')
             use_reranking: Override reranking setting
             filter_type: Intent filter ("code", "theory", "hybrid")
+            faiss_weight: Override FAISS weight for this query
+            bm25_weight: Override BM25 weight for this query
             
         Returns:
             List of RetrievalResult objects
@@ -276,12 +299,17 @@ class HybridRetriever:
             logger.warning("Cannot search: index is empty")
             return []
         
+        # Determine weights
+        f_weight = faiss_weight if faiss_weight is not None else self.faiss_weight
+        b_weight = bm25_weight if bm25_weight is not None else self.bm25_weight
+        
         # Determine if we should rerank
         should_rerank = use_reranking if use_reranking is not None else self.enable_reranking
         should_rerank = should_rerank and self.ranker is not None
         
         # Expand retrieval for filtering and reranking
         expansion_factor = 4 if (filter_type != "hybrid" or should_rerank) else 1
+        # Need slightly more candidates if we are filtering heavily
         n_candidates = min(top_k * expansion_factor, len(self.chunks))
         
         # Get initial results
@@ -290,7 +318,7 @@ class HybridRetriever:
         elif method == "bm25":
             results = self._search_bm25(query, n_candidates)
         else:
-            results = self._search_hybrid(query, n_candidates)
+            results = self._search_hybrid(query, n_candidates, f_weight, b_weight)
         
         # Apply intent-based filtering BEFORE reranking
         results = self._filter_by_type(results, filter_type)
@@ -303,6 +331,14 @@ class HybridRetriever:
         if should_rerank and len(results) > 0:
             results = self._rerank(query, results, top_k)
         else:
+            # When using RRF (hybrid), scores are small. 
+            # If standard similarity threshold is high (0.25), it might filter all RRF results.
+            # Reranking usually provides calibrated scores. 
+            # If not reranking, we should be careful with thresholding RRF scores.
+            # But legacy behavior used min_similarity.
+            # We'll allow RRF scores to pass if they are "good enough" relative to RRF scale?
+            # Or just strictly follow min_similarity. 
+            # Given Task 1 change, let's keep it consistent.
             results = [r for r in results if r.score >= self.min_similarity][:top_k]
         
         # Update ranks
@@ -342,6 +378,8 @@ class HybridRetriever:
         query: str,
         top_k: int = 5,
         filter_type: str = "hybrid",
+        faiss_weight: Optional[float] = None,
+        bm25_weight: Optional[float] = None,
     ) -> Dict[str, List[RetrievalResult]]:
         """
         Search with intent-based pre-filtering, then separate by type.
@@ -350,6 +388,8 @@ class HybridRetriever:
             query: Search query
             top_k: Number of results per type
             filter_type: Intent filter ("code", "theory", "hybrid")
+            faiss_weight: Override FAISS weight
+            bm25_weight: Override BM25 weight
             
         Returns:
             Dict with 'code' and 'theory' keys
@@ -359,6 +399,8 @@ class HybridRetriever:
             query, 
             top_k=top_k * 2, 
             filter_type=filter_type,
+            faiss_weight=faiss_weight,
+            bm25_weight=bm25_weight,
         )
         
         # Separate by type
@@ -415,42 +457,55 @@ class HybridRetriever:
             for rank, idx in enumerate(top_indices)
         ]
     
-    def _search_hybrid(self, query: str, n: int) -> List[RetrievalResult]:
-        """Hybrid search using Reciprocal Rank Fusion."""
+    def _search_hybrid(
+        self, 
+        query: str, 
+        n: int,
+        faiss_weight: Optional[float] = None,
+        bm25_weight: Optional[float] = None,
+    ) -> List[RetrievalResult]:
+        """
+        Hybrid search using Reciprocal Rank Fusion (RRF).
+
+        The reported score is the actual RRF score used for ranking,
+        ensuring mathematical consistency with downstream thresholds
+        (e.g. FlashRank min_similarity).
+        """
         k = 60
         
+        # Use provided weights or defaults
+        f_w = faiss_weight if faiss_weight is not None else self.faiss_weight
+        b_w = bm25_weight if bm25_weight is not None else self.bm25_weight
+
         faiss_results = self._search_faiss(query, n)
         bm25_results = self._search_bm25(query, n)
-        
+
+        # Accumulate RRF scores and keep a reference to each chunk
         rrf_scores: Dict[str, float] = {}
-        chunk_map: Dict[str, Tuple[Chunk, float, float]] = {}
-        
+        chunk_map: Dict[str, Chunk] = {}
+
         for r in faiss_results:
             cid = r.chunk.chunk_id
-            rrf_scores[cid] = rrf_scores.get(cid, 0) + self.faiss_weight / (k + r.rank)
+            rrf_scores[cid] = rrf_scores.get(cid, 0) + f_w / (k + r.rank)
             if cid not in chunk_map:
-                chunk_map[cid] = (r.chunk, r.score, 0.0)
-            else:
-                chunk_map[cid] = (chunk_map[cid][0], r.score, chunk_map[cid][2])
-        
+                chunk_map[cid] = r.chunk
+
         for r in bm25_results:
             cid = r.chunk.chunk_id
-            rrf_scores[cid] = rrf_scores.get(cid, 0) + self.bm25_weight / (k + r.rank)
+            rrf_scores[cid] = rrf_scores.get(cid, 0) + b_w / (k + r.rank)
             if cid not in chunk_map:
-                chunk_map[cid] = (r.chunk, 0.0, r.score)
-            else:
-                chunk_map[cid] = (chunk_map[cid][0], chunk_map[cid][1], r.score)
-        
+                chunk_map[cid] = r.chunk
+
         sorted_items = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        
+
         return [
             RetrievalResult(
-                chunk=chunk_map[cid][0],
-                score=self.faiss_weight * chunk_map[cid][1] + self.bm25_weight * chunk_map[cid][2],
+                chunk=chunk_map[cid],
+                score=rrf_score,          # Report the actual RRF score
                 rank=rank + 1,
                 source="hybrid",
             )
-            for rank, (cid, _) in enumerate(sorted_items[:n])
+            for rank, (cid, rrf_score) in enumerate(sorted_items[:n])
         ]
     
     def _rerank(
@@ -505,16 +560,22 @@ class HybridRetriever:
                         source="reranked",
                     ))
             
-            reranked_results = [
+            # Helper to filter based on score
+            final_results = [
                 r for r in reranked_results 
                 if r.score >= self.min_similarity
             ]
             
-            return reranked_results
+            return final_results
             
         except Exception as e:
             logger.warning(f"Reranking failed: {e}")
-            return [r for r in results if r.score >= self.min_similarity][:top_k]
+            # If reranking fails, we return original RRF scores.
+            # RRF scores are typically small (< 0.1), so applying min_similarity (0.25)
+            # would filter everything. In fallback mode, we skip the threshold check
+            # or apply a much lower one, but to be safe and ensure continuity,
+            # we simply return the top-k without filtering by min_similarity for RRF scores.
+            return results[:top_k]
     
     # =========================================================================
     # PERSISTENCE

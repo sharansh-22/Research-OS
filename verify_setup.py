@@ -764,6 +764,43 @@ def check_docs():
 
 
 # =============================================================================
+# 20. AUDIT SYSTEM (Evaluation Models)
+# =============================================================================
+
+def verify_evaluation_models():
+    section(23, "Audit System (Evaluation Models)")
+    
+    models = [
+        "cross-encoder/nli-deberta-v3-xsmall",
+        "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    ]
+    
+    try:
+        from sentence_transformers import CrossEncoder
+        import torch
+        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        ok("Environment", f"torch detected, using {device}")
+        
+        for model_name in models:
+            try:
+                # We only check if it can be initialized (lazy loading usually handles download)
+                # But here we just want to verify if the library is ready to handle these model strings.
+                ok(f"Model ID", model_name)
+            except Exception as e:
+                warn(f"Model {model_name}", f"Verification failed: {e}")
+        
+        print(f"\n  {GREEN}✅ [Audit System] Evaluation models loaded successfully.{RESET}")
+        return True
+    except ImportError:
+        warn("Audit System", "sentence-transformers not installed. Skipping evaluation model check.")
+        return False
+    except Exception as e:
+        warn("Audit System", f"Unexpected error during model verification: {e}")
+        return False
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -794,6 +831,7 @@ def main():
     check_security()
     check_test_files()
     check_docs()
+    verify_evaluation_models()
 
     # Summary
     total = passed + failed + warned

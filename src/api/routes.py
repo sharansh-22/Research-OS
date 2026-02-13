@@ -33,6 +33,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from .dependencies import verify_api_key, PipelineState
 from .ingestion_tracker import tracker, IngestionStage
+from ..rag.config import DEFAULT_UPLOAD_DIR, VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,26 @@ class HealthResponse(BaseModel):
     smart_routing: bool
 
 
+class EvidenceChunk(BaseModel):
+    text: str
+    file_name: str = Field(default="Unknown Source")
+    page: Optional[int] = Field(default=None)
+
+
+class EvaluationMetadata(BaseModel):
+    faithfulness: float = Field(..., description="Faithfulness score (0-1)")
+    relevancy: float = Field(..., description="Relevancy score (0-1)")
+    sources: int = Field(..., description="Number of sources used")
+    reasoning: Optional[str] = Field(default=None, description="Auditor's logical reasoning")
+    evidence: List[EvidenceChunk] = Field(default_factory=list, description="Top evidence snippets with metadata")
+    cached: bool = Field(default=False, description="Whether the result was from semantic cache")
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    audit: EvaluationMetadata
+
+
 # =============================================================================
 # ROUTER
 # =============================================================================
@@ -79,7 +100,7 @@ router = APIRouter()
 # POST /v1/chat
 # =============================================================================
 
-@router.post("/v1/chat", tags=["Chat"])
+@router.post("/v1/chat", response_model=QueryResponse, tags=["Chat"])
 async def chat(request: ChatRequest, _api_key: str = Depends(verify_api_key)):
     pipeline = PipelineState.get()
 
@@ -89,28 +110,26 @@ async def chat(request: ChatRequest, _api_key: str = Depends(verify_api_key)):
         if msg["role"] not in ("user", "assistant"):
             raise HTTPException(status_code=422, detail=f"history[{i}].role must be 'user' or 'assistant'")
 
-    def event_generator():
-        try:
-            for json_str in pipeline.query_stream(
-                question=request.query,
-                history=request.history,
-                filter_type=request.filter_type,
-                yield_json=True,
-            ):
-                yield {"data": json_str}
-        except Exception as e:
-            logger.error(f"SSE stream error: {e}", exc_info=True)
-            import json
-            yield {"data": json.dumps({"event": "error", "error": str(e)})}
-
-    return EventSourceResponse(event_generator())
+    try:
+        # Using query_with_audit for real-time quality scores
+        result_dict = pipeline.query_with_audit(
+            question=request.query,
+            history=request.history
+        )
+        return QueryResponse(**result_dict)
+    except Exception as e:
+        logger.error(f"Chat error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Generation failed: {str(e)}"
+        )
 
 
 # =============================================================================
 # POST /v1/ingest/file
 # =============================================================================
 
-UPLOAD_DIR = Path("data/04_misc")
+UPLOAD_DIR = Path(DEFAULT_UPLOAD_DIR)
 
 
 def _run_ingest_file(file_path: Path, task_id: str):

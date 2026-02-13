@@ -32,6 +32,16 @@ from .embedder import FastEmbedder, get_embedder
 from .retriever import HybridRetriever, RetrievalResult
 from .generator import ResearchArchitect, GenerationResult
 from .verifier import ArchitectureVerifier
+from .evaluator import RAGEvaluator
+from .auditor import ResearchAuditor
+from .config import (
+    DEFAULT_INDEX_DIR, DEFAULT_TOP_K, DEFAULT_MIN_SIMILARITY,
+    DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_MAX_HISTORY,
+    LEDGER_FILENAME
+)
+
+import faiss
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -76,19 +86,19 @@ THEORY_PATTERN = re.compile('|'.join(THEORY_KEYWORDS), re.IGNORECASE)
 @dataclass
 class PipelineConfig:
     """Configuration for Research Pipeline."""
-    index_dir: str = "data/index"
-    top_k: int = 5
-    min_similarity: float = 0.25
+    index_dir: str = DEFAULT_INDEX_DIR
+    top_k: int = DEFAULT_TOP_K
+    min_similarity: float = DEFAULT_MIN_SIMILARITY
     faiss_weight: float = 0.7
     bm25_weight: float = 0.3
-    temperature: float = 0.3
-    max_tokens: int = 2048
+    temperature: float = DEFAULT_TEMPERATURE
+    max_tokens: int = DEFAULT_MAX_TOKENS
     enable_fallback: bool = True
-    max_history_turns: int = 3
+    max_history_turns: int = DEFAULT_MAX_HISTORY
     enable_smart_routing: bool = True
     verify_code: bool = True
     verification_timeout: int = 10
-    ledger_filename: str = "processed_files.json"
+    ledger_filename: str = LEDGER_FILENAME
     use_file_hash: bool = True
 
     def to_dict(self) -> Dict:
@@ -114,10 +124,13 @@ class QueryResult:
     generation_metadata: Dict
     intent: str = "hybrid"
     sources: List[Dict] = None
+    evaluation: Dict = None
 
     def __post_init__(self):
         if self.sources is None:
             self.sources = []
+        if self.evaluation is None:
+            self.evaluation = {}
 
     def to_dict(self) -> Dict:
         return {
@@ -128,6 +141,7 @@ class QueryResult:
             "verification": self.verification_results,
             "metadata": self.generation_metadata,
             "sources": self.sources,
+            "evaluation": self.evaluation,
         }
 
 
@@ -139,6 +153,48 @@ class IngestionResult:
     chunks_added: int
     message: str
     processing_time: float = 0.0
+
+
+# =============================================================================
+# SEMANTIC CACHE
+# =============================================================================
+
+class SemanticCache:
+    """FAISS-based semantic cache for queries."""
+    def __init__(self, embedder: Any, dimension: int = 384, threshold: float = 0.95):
+        self.embedder = embedder
+        self.index = faiss.IndexFlatIP(dimension)
+        self.threshold = threshold
+        self.cached_queries: List[str] = []
+        self.cached_results: List[Dict] = []
+        logger.info(f"Semantic Cache initialized (dimension={dimension}, threshold={threshold})")
+
+    def get(self, query: str) -> Optional[Dict]:
+        """Check if query is in cache."""
+        if self.index.ntotal == 0:
+            return None
+        
+        try:
+            q_emb = self.embedder.embed_query(query).reshape(1, -1)
+            D, I = self.index.search(q_emb, 1)
+            
+            if D[0][0] >= self.threshold:
+                match_idx = I[0][0]
+                logger.info(f"Cache HIT (score={D[0][0]:.4f}): {query}")
+                return self.cached_results[match_idx]
+        except Exception as e:
+            logger.warning(f"Cache lookup failed: {e}")
+        return None
+
+    def add(self, query: str, result: Dict):
+        """Add query and result to cache."""
+        try:
+            q_emb = self.embedder.embed_query(query).reshape(1, -1)
+            self.index.add(q_emb)
+            self.cached_queries.append(query)
+            self.cached_results.append(result)
+        except Exception as e:
+            logger.warning(f"Failed to add to cache: {e}")
 
 
 @dataclass
@@ -176,6 +232,8 @@ class StreamChunk:
 def _extract_sources(
     code_results: List[RetrievalResult],
     theory_results: List[RetrievalResult],
+    processed_files: Dict[str, Dict],
+    config: PipelineConfig,
 ) -> List[Dict]:
     """
     Build a deduplicated, structured list of source citations
@@ -187,6 +245,7 @@ def _extract_sources(
         - section: section title (if available)
         - score: relevance score
         - chunk_id: unique chunk identifier
+        - verified: boolean (integrity check)
 
     Deduplication is by (source filename + section).
     """
@@ -213,6 +272,36 @@ def _extract_sources(
         if dedup_key in seen:
             continue
         seen.add(dedup_key)
+        
+        # Integrity Check
+        verified = False
+        if filename in processed_files:
+            file_info = processed_files[filename]
+            
+            # 1. Check if file is in ledger (Done above)
+            # 2. Check hash if enabled
+            if config.use_file_hash and file_info.get("file_hash"):
+                # We need to re-compute hash of the source file to verify
+                # This might be expensive, so we only do it if the file exists
+                try:
+                    p = Path(file_info["path"])
+                    if p.exists():
+                        # We use the pipeline's hash method if available, or re-implement simple MD5
+                        # Since we don't have self instance here, we implement simple MD5 read
+                        hasher = hashlib.md5()
+                        with open(p, 'rb') as f:
+                            for chunk in iter(lambda: f.read(8192), b''):
+                                hasher.update(chunk)
+                        current_hash = hasher.hexdigest()
+                        verified = (current_hash == file_info["file_hash"])
+                    else:
+                        verified = False # File missing on disk
+                except Exception:
+                    verified = False
+            else:
+                verified = True # Trust ledger if hashing disabled
+        else:
+            verified = False # Not in ledger
 
         source_entry = {
             "source": filename,
@@ -220,6 +309,7 @@ def _extract_sources(
             "section": section if section else None,
             "score": round(result.score, 4),
             "chunk_id": result.chunk.chunk_id,
+            "verified": verified,
         }
 
         # Include source_path if available
@@ -261,7 +351,31 @@ def _strip_hallucinated_sources(text: str) -> str:
                 f"{match.start()}/{len(text)} ({position_ratio:.0%})"
             )
             return stripped
+            return stripped
     return text
+
+
+def _extract_evidence(code_results: List[RetrievalResult], theory_results: List[RetrievalResult], limit: int = 3) -> List[str]:
+    """Extract top sentences as evidence snippets."""
+    all_results = code_results + theory_results
+    # Sort by score descending
+    all_results.sort(key=lambda x: x.score, reverse=True)
+    
+    evidence = []
+    for res in all_results[:limit]:
+        text = res.chunk.content
+        # Split into sentences and take first 1-2
+        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+        if sentences:
+            snippet = sentences[0]
+            if len(snippet) < 200:
+                 evidence.append(snippet)
+            else:
+                 evidence.append(snippet[:200] + "...")
+        else:
+            evidence.append(text[:200] + "...")
+            
+    return list(set(evidence)) # Deduplicate
 
 
 # =============================================================================
@@ -292,6 +406,15 @@ class ResearchPipeline:
             max_tokens=self.config.max_tokens,
             enable_fallback=self.config.enable_fallback,
         )
+        
+        # Initialize Evaluator (Legacy)
+        self.evaluator = RAGEvaluator()
+        
+        # Initialize New Auditor (CoT)
+        self.auditor = ResearchAuditor()
+
+        # Initialize Semantic Cache
+        self.cache = SemanticCache(self.embedder)
 
         self.verifier = ArchitectureVerifier(
             timeout_seconds=self.config.verification_timeout
@@ -366,11 +489,27 @@ class ResearchPipeline:
         else:
             intent = "hybrid"
 
+        # Determine weights based on intent
+        # theory -> FAISS 0.8 / BM25 0.2
+        # code -> FAISS 0.5 / BM25 0.5
+        # hybrid -> Config defaults
+        faiss_weight = None
+        bm25_weight = None
+        
+        if intent == "theory":
+            faiss_weight = 0.8
+            bm25_weight = 0.2
+        elif intent == "code":
+            faiss_weight = 0.5
+            bm25_weight = 0.5
+
         # Retrieve
         results = self.retriever.search_by_type_filtered(
             query=question,
             top_k=self.config.top_k,
             filter_type=intent,
+            faiss_weight=faiss_weight,
+            bm25_weight=bm25_weight,
         )
         code_results = results.get("code", [])
         theory_results = results.get("theory", [])
@@ -387,7 +526,12 @@ class ResearchPipeline:
         clean_response = _strip_hallucinated_sources(gen_result.response)
 
         # Build structured sources from retrieval metadata
-        sources = _extract_sources(code_results, theory_results)
+        sources = _extract_sources(
+            code_results, 
+            theory_results,
+            self._processed_files,
+            self.config
+        )
 
         # Verify
         verifications = []
@@ -396,6 +540,26 @@ class ResearchPipeline:
                 v.to_dict()
                 for v in self.verifier.verify_generated_response(clean_response)
             ]
+            
+        # Evaluate (Real-time Quality Badges)
+        evaluation = {
+            "faithfulness": 0.0,
+            "relevancy": 0.0
+        }
+        try:
+            # We construct a single context string for evaluation
+            context_str = self.generator._format_context(code_results, theory_results)
+            
+            evaluation["faithfulness"] = self.evaluator.evaluate_faithfulness(
+                context=context_str,
+                answer=clean_response
+            )
+            evaluation["relevancy"] = self.evaluator.evaluate_relevancy(
+                query=question,
+                answer=clean_response
+            )
+        except Exception as e:
+            logger.warning(f"Evaluation failed: {e}")
 
         return QueryResult(
             query=question,
@@ -406,7 +570,83 @@ class ResearchPipeline:
             generation_metadata=gen_result.to_dict(),
             intent=intent,
             sources=sources,
+            evaluation=evaluation,
         )
+
+    def query_with_audit(
+        self,
+        question: str,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute query and return with real-time quality audit.
+        Includes Semantic Cache and Source Evidence Mapping.
+        """
+        # 1. Check Cache
+        cached_res = self.cache.get(question)
+        if cached_res:
+            cached_res["audit"]["cached"] = True
+            return cached_res
+
+        # 2. Run standard query
+        result = self.query(question, history=history)
+        
+        # 3. Extract Evidence
+        evidence = []
+        all_chunks = result.code_context + result.theory_context
+        
+        for ctx in all_chunks[:3]:
+             text = ctx.get("text", "")
+             meta = ctx.get("metadata", {})
+             
+             # Extract metadata
+             file_name = meta.get("source") or meta.get("file_name") or "Unknown Source"
+             page = meta.get("page")
+             
+             # Sentence splitting
+             sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 10]
+             snippet = ""
+             if sentences:
+                 snippet = f"\"{sentences[0]}.\""
+             elif text:
+                 snippet = f"\"{text[:100]}...\""
+                 
+             if snippet:
+                 evidence.append({
+                     "text": snippet,
+                     "file_name": file_name,
+                     "page": page
+                 })
+        
+        # 4. Conceptual Audit (LLM CoT)
+        context_str = self.generator._format_context(
+             [RetrievalResult.model_validate(c) for c in result.code_context],
+             [RetrievalResult.model_validate(c) for c in result.theory_context]
+        )
+        
+        audit_data = self.auditor.audit(
+            query=question,
+            context=context_str,
+            answer=result.response
+        )
+        
+        final_result = {
+            "answer": result.response,
+            "audit": {
+                "faithfulness": audit_data.get("faithfulness", 0.0),
+                "relevancy": audit_data.get("relevancy", 0.0),
+                "reasoning": audit_data.get("reasoning", ""),
+                "evidence": evidence,
+                "sources": len(result.sources),
+                "cached": False
+            }
+        }
+        
+        # 5. Add to Cache
+        if final_result["audit"]["faithfulness"] > 0.8: # Only cache high quality answers
+            self.cache.add(question, final_result)
+            
+        return final_result
 
     def query_stream(
         self,
@@ -449,11 +689,27 @@ class ResearchPipeline:
             start_chunk = StreamChunk(event="start", intent=intent)
             yield start_chunk.to_json() if yield_json else start_chunk
 
+            # Determine weights based on intent
+            # theory -> FAISS 0.8 / BM25 0.2
+            # code -> FAISS 0.5 / BM25 0.5
+            # hybrid -> Config defaults
+            faiss_weight = None
+            bm25_weight = None
+            
+            if intent == "theory":
+                faiss_weight = 0.8
+                bm25_weight = 0.2
+            elif intent == "code":
+                faiss_weight = 0.5
+                bm25_weight = 0.5
+
             # Retrieve
             results = self.retriever.search_by_type_filtered(
                 query=question,
                 top_k=self.config.top_k,
                 filter_type=intent,
+                faiss_weight=faiss_weight,
+                bm25_weight=bm25_weight,
             )
             code_results = results.get("code", [])
             theory_results = results.get("theory", [])
@@ -479,7 +735,12 @@ class ResearchPipeline:
                 yield token_chunk.to_json() if yield_json else token_chunk
 
             # Build structured sources from retrieval metadata
-            sources = _extract_sources(code_results, theory_results)
+            sources = _extract_sources(
+                code_results, 
+                theory_results,
+                self._processed_files,
+                self.config
+            )
 
             # Yield sources event (always, even if empty)
             sources_chunk = StreamChunk(event="sources", sources=sources)
@@ -702,7 +963,7 @@ class ResearchPipeline:
 # =============================================================================
 
 def create_pipeline(
-    index_dir: str = "data/index",
+    index_dir: str = DEFAULT_INDEX_DIR,
     load_existing: bool = True,
 ) -> ResearchPipeline:
     config = PipelineConfig(index_dir=index_dir)

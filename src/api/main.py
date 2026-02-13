@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .dependencies import PipelineState
 from .routes import router
+from ..rag.config import VERSION, DEFAULT_INDEX_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +19,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=" * 60)
-    logger.info("Research-OS API starting up...")
+    logger.info(f"Research-OS API v{VERSION} starting up...")
     logger.info("=" * 60)
 
-    index_dir = os.environ.get("RESEARCH_OS_INDEX_DIR", "data/index")
+    index_dir = os.environ.get("RESEARCH_OS_INDEX_DIR", DEFAULT_INDEX_DIR)
 
     try:
         PipelineState.initialize(index_dir=index_dir, load_existing=True)
@@ -42,7 +43,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Research-OS API",
         description="RAG-powered research assistant",
-        version="2.1.0",
+        version=VERSION,
         lifespan=lifespan,
     )
 
@@ -65,6 +66,6 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def root():
-        return {"service": "Research-OS API", "version": "2.1.0", "docs": "/docs", "health": "/health"}
+        return {"service": "Research-OS API", "version": VERSION, "docs": "/docs", "health": "/health"}
 
     return app

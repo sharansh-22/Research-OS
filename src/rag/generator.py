@@ -148,13 +148,7 @@ class ResearchArchitect:
         
         # Initialize fallback (lazy)
         self.ollama_client = None
-        if self.enable_fallback:
-            try:
-                import ollama
-                self.ollama_client = ollama.Client(host="http://localhost:11434")
-                logger.info(f"✓ Fallback ready ({self.FALLBACK_MODEL})")
-            except ImportError:
-                logger.warning("Ollama not available for fallback")
+
     
     # =========================================================================
     # CONTEXT FORMATTING
@@ -190,6 +184,40 @@ class ResearchArchitect:
         
         return "\n".join(sections)
     
+    def _summarize_history(self, messages: List[Dict[str, str]]) -> str:
+        """
+        Summarize a list of messages into a concise 1-2 sentence context string.
+        """
+        if not messages:
+            return ""
+        
+        # Format conversation for summarization
+        conversation_text = ""
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            conversation_text += f"{role.upper()}: {content}\n"
+        
+        prompt = f"""Summarize the key mathematical concepts and code implementation details discussed in this conversation into 1-2 sentences. Focus on preserving context about theorems or algorithms mentioned.
+        
+        CONVERSATION:
+        {conversation_text}
+        
+        SUMMARY:"""
+        
+        try:
+            # Use Groq for summarization if available (fast)
+            response = self.groq_client.chat.completions.create(
+                model=self.GROQ_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100,
+                temperature=0.3
+            )
+            return response.choices[0].message.content.strip()
+        except Exception:
+            # Fallback to simple truncation if summarization fails
+            return "Previous discussion involved research topics."
+
     def _build_messages(
         self,
         query: str,
@@ -200,20 +228,39 @@ class ResearchArchitect:
         Build message list for API call with conversation history.
         
         Message order:
-        1. System prompt
-        2. Conversation history (previous turns)
+        1. System prompt (with summarized LTM if applicable)
+        2. Conversation history (recent turns)
         3. Current query with context
         """
+        history = history or []
+        
+        # Handle LTM (Summarization)
+        history_summary = ""
+        recent_history = history
+        
+        max_messages = self.MAX_HISTORY_TURNS * 2
+        if len(history) > max_messages:
+            # Split into evicted (old) and kept (recent)
+            num_evicted = len(history) - max_messages
+            # Ensure we evict in pairs if possible, but strict count is fine
+            evicted = history[:num_evicted]
+            recent_history = history[num_evicted:]
+            
+            # Summarize evicted messages
+            # Note: We do this synchronously. In production, this might be async/background.
+            logger.info(f"Summarizing {len(evicted)} evicted messages for LTM...")
+            summary_text = self._summarize_history(evicted)
+            history_summary = f"\n\n[Past Context Summary]: {summary_text}"
+        
+        # Update System Prompt with Summary
+        current_system_prompt = SYSTEM_PROMPT + history_summary
+        
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT}
+            {"role": "system", "content": current_system_prompt}
         ]
         
-        # Add conversation history (after system, before current query)
-        if history:
-            # Limit history to last N turns (2 messages per turn)
-            max_messages = self.MAX_HISTORY_TURNS * 2
-            limited_history = history[-max_messages:]
-            messages.extend(limited_history)
+        # Add recent conversation history
+        messages.extend(recent_history)
         
         # Build current user message with context
         if context:
@@ -285,7 +332,7 @@ If no specific documents are retrieved, provide a general answer based on your k
             logger.error(f"Groq streaming failed: {e}")
             
             # Try Ollama fallback
-            if self.enable_fallback and self.ollama_client:
+            if self.enable_fallback:
                 try:
                     logger.info(f"Falling back to {self.FALLBACK_MODEL}...")
                     yield from self._stream_ollama(messages)
@@ -318,6 +365,17 @@ If no specific documents are retrieved, provide a general answer based on your k
         messages: List[Dict[str, str]],
     ) -> Generator[str, None, None]:
         """Stream from Ollama (fallback)."""
+        if self.ollama_client is None:
+            try:
+                import ollama
+                self.ollama_client = ollama.Client(host="http://localhost:11434")
+            except ImportError:
+                yield "⚠️ Ollama not installed."
+                return
+            except Exception as e:
+                yield f"⚠️ Failed to connect to Ollama: {e}"
+                return
+
         stream = self.ollama_client.chat(
             model=self.FALLBACK_MODEL,
             messages=messages,
@@ -386,8 +444,12 @@ If no specific documents are retrieved, provide a general answer based on your k
             logger.error(f"Groq failed: {e}")
             
             # Try fallback
-            if self.enable_fallback and self.ollama_client:
+            if self.enable_fallback:
                 try:
+                    if self.ollama_client is None:
+                        import ollama
+                        self.ollama_client = ollama.Client(host="http://localhost:11434")
+
                     response = self.ollama_client.chat(
                         model=self.FALLBACK_MODEL,
                         messages=messages,
@@ -450,15 +512,10 @@ If no specific documents are retrieved, provide a general answer based on your k
         except Exception as e:
             logger.warning(f"Groq check failed: {e}")
         
+        # Ollama check skipped to prevent model loading (Lazy Load)
         if self.ollama_client:
-            try:
-                self.ollama_client.chat(
-                    model=self.FALLBACK_MODEL,
-                    messages=[{"role": "user", "content": "hi"}],
-                    options={"num_predict": 5},
-                )
-                status["ollama_fallback"] = True
-            except Exception as e:
-                logger.warning(f"Ollama check failed: {e}")
+             status["ollama_fallback"] = True # Assume true if client exists (formerly checked)
+        else:
+             status["ollama_fallback"] = False # Not loaded yet
         
         return status

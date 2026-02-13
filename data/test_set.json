@@ -1,0 +1,65 @@
+[
+  {
+    "id": "trans_01",
+    "question": "In the 'Attention Is All You Need' paper, what is the exact formula for Scaled Dot-Product Attention?",
+    "expected_intent": "theory",
+    "min_faithfulness": 5,
+    "rationale": "Tests LaTeX symbol retrieval (FAISS) and formula accuracy."
+  },
+  {
+    "id": "polarmem_01",
+    "question": "What is the primary architectural difference between PolarMem's polarized latent graph memory and traditional vector associative memory?",
+    "expected_intent": "theory",
+    "min_relevancy": 4,
+    "rationale": "Tests 2026-era terminology and complex conceptual differentiation."
+  },
+  {
+    "id": "rag_orig_01",
+    "question": "Contrast the RAG-Sequence and RAG-Token models as described by Lewis et al. (2020).",
+    "expected_intent": "theory",
+    "min_faithfulness": 4,
+    "rationale": "Tests deep multi-paragraph comparison logic."
+  },
+  {
+    "id": "diff_embed_01",
+    "question": "How do diffusion-pretrained embeddings handle global context compared to autoregressive causal attention models?",
+    "expected_intent": "theory",
+    "min_relevancy": 5,
+    "rationale": "Tests understanding of bidirectional vs. unidirectional attention mechanisms."
+  },
+  {
+    "id": "code_resnet_01",
+    "question": "Based on the ResNet paper, explain the 'Shortcut Connection' and how it solves the vanishing gradient problem in deep networks.",
+    "expected_intent": "theory",
+    "min_groundedness": 1.0,
+    "rationale": "Tests technical problem-solving and historical context retrieval."
+  },
+  {
+    "id": "code_attn_01",
+    "question": "Implement a scaled dot-product attention function in PyTorch.",
+    "expected_intent": "code",
+    "min_faithfulness": 4,
+    "rationale": "Tests code retrieval and generation."
+  },
+  {
+    "id": "code_transformer_01",
+    "question": "Write a Python class for a multi-head attention layer using PyTorch.",
+    "expected_intent": "code",
+    "min_relevancy": 5,
+    "rationale": "Tests complex code generation."
+  },
+  {
+    "id": "hybrid_opt_01",
+    "question": "Explain the Adam optimizer and provide a PyTorch implementation.",
+    "expected_intent": "hybrid",
+    "min_groundedness": 0.8,
+    "rationale": "Tests hybrid retrieval (Theory + Code)."
+  },
+  {
+    "id": "hybrid_loss_01",
+    "question": "What is Cross-Entropy Loss? Show how to use it in PyTorch.",
+    "expected_intent": "hybrid",
+    "min_faithfulness": 5,
+    "rationale": "Tests hybrid retrieval and explanation."
+  }
+]

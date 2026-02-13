@@ -46,7 +46,7 @@ export function streamChat(query, history, filterType, onEvent, onDone, onError)
     body: JSON.stringify(body),
     signal: controller.signal,
   })
-    .then(async function(response) {
+    .then(async function (response) {
       if (!response.ok) {
         var text = await response.text();
         onError("HTTP " + response.status + ": " + text);
@@ -67,21 +67,37 @@ export function streamChat(query, history, filterType, onEvent, onDone, onError)
           if (!line.startsWith("data:")) continue;
           var dataStr = line.slice(5).trim();
           if (!dataStr) continue;
-          try { onEvent(JSON.parse(dataStr)); } catch(e) {}
+          try { onEvent(JSON.parse(dataStr)); } catch (e) { }
         }
       }
       if (buffer.startsWith("data:")) {
         var ds = buffer.slice(5).trim();
-        if (ds) { try { onEvent(JSON.parse(ds)); } catch(e) {} }
+        if (ds) { try { onEvent(JSON.parse(ds)); } catch (e) { } }
       }
       onDone();
     })
-    .catch(function(err) {
+    .catch(function (err) {
       if (err.name === "AbortError") return;
       onError(err.message);
     });
 
   return controller;
+}
+
+export async function fetchChat(query, history, filterType) {
+  var body = { query: query, history: history };
+  if (filterType) body.filter_type = filterType;
+
+  var res = await fetch(API_BASE + "/v1/chat", {
+    method: "POST",
+    headers: getHeaders(true),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    var text = await res.text();
+    throw new Error("Chat failed (" + res.status + "): " + text);
+  }
+  return res.json();
 }
 
 export async function uploadFile(file) {

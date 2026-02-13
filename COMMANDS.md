@@ -27,14 +27,21 @@ export GROQ_API_KEY="gsk_..."                 # required — LLM generation
 export RESEARCH_OS_API_KEY="your-secret-key"  # required — API authentication
 
 # =============================================================================
-# 2. SYSTEM VERIFICATION
+# 3. SYSTEM VERIFICATION & EVALUATION
 # =============================================================================
 
 # Full 22-section system check (run before anything)
 python verify_setup.py                        # checks env, packages, files, index, imports, network
 
+# Generate Accuracy Report Card (Faithfulness, Relevancy, Groundedness)
+python evaluate.py --test-set data/test_set.json
+# Output saved to: EVAL_REPORT.md
+
+# View the Report Card
+cat EVAL_REPORT.md
+
 # =============================================================================
-# 3. WEB MODE (Frontend + Backend)
+# 4. WEB MODE (Frontend + Backend)
 # =============================================================================
 
 # One command — starts backend, frontend, opens browser
@@ -210,3 +217,13 @@ git pull origin main
 # 2. cd frontend && npm run dev               # in second terminal
 # 3. Edit code — both servers auto-restart
 # 4. python verify_setup.py                   # re-verify after changes
+
+## 🛡️ Audited Chat Mode
+
+### CLI (Terminal)
+python main.py --query "Your question" --no-stream
+Description: Runs a query and displays the Answer + Color-coded Audit Report (Faithfulness/Relevancy).
+
+### API (Verification)
+curl -X POST http://localhost:8000/v1/chat -d '{"query": "test"}'
+Description: Returns JSON with 'answer' and 'audit' metadata.

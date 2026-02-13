@@ -1,385 +1,208 @@
-# AI Knowledge Assistant - Complete Project Structure & Architecture
+# Research-OS - Complete Project Structure & Architecture
 
 ## 📋 Executive Summary
 
-The **AI Knowledge Assistant** is an end-to-end Retrieval-Augmented Generation (RAG) system that enables intelligent querying over a knowledge base of PDFs. It combines dense vector search (FAISS), sparse keyword search (BM25), and local LLM inference (Ollama) to provide accurate, context-aware answers with source attribution.
+**Research-OS** is an end-to-end Retrieval-Augmented Generation (RAG) system that enables intelligent querying over a multi-format knowledge base. It combines dense vector search (FAISS), sparse keyword search (BM25), cross-encoder reranking (FlashRank), and LLM inference (Groq API primary, Ollama fallback) to provide accurate, context-aware answers with source attribution.
 
 ### Key Features
-- **Hybrid Search**: FAISS (semantic) + BM25 (keyword) for comprehensive retrieval
-- **Smart Text Processing**: Intelligent PDF chunking with metadata preservation
-- **Local LLM Generation**: Ollama integration for offline inference
-- **Interactive CLI**: Real-time query processing with source tracking
-- **Modular Architecture**: Pluggable components for extensibility
-- **Batch Ingestion**: Process multiple PDFs efficiently
+- **Hybrid Search**: FAISS (semantic) + BM25 (keyword) with Reciprocal Rank Fusion (RRF)
+- **Cross-Encoder Reranking**: FlashRank (ms-marco-TinyBERT-L-2-v2) for precision
+- **Multi-Format Ingestion**: PDF, Python, Jupyter, Markdown, LaTeX, C++/CUDA
+- **Smart Query Routing**: Intent classification (code / theory / hybrid)
+- **Streaming Generation**: Server-Sent Events (SSE) for real-time token delivery
+- **3-Turn Conversation Memory**: Sliding window context for multi-turn chat
+- **React Frontend**: Three-pane UI with session management and source inspector
+- **FastAPI Backend**: RESTful API with auth, background ingestion, and health checks
+- **System Integrity**: MD5 file hashing, ingestion ledger, constant-time API key comparison
 
 ---
 
 ## 📁 Directory Structure
 
 ```
-ai-knowledge-assistant/
+Research-OS/
 │
 ├── 📄 ROOT CONFIGURATION FILES
-│   ├── .gitattributes              # Git LFS (Large File Storage) config for PDFs/binary files
+│   ├── .gitattributes              # Git LFS config for PDFs/binary files
 │   ├── .gitignore                  # Git ignore patterns
-│   │   └── Excludes: logs/, .env, __pycache__, .vscode, data/*, etc.
-│   ├── requirements.txt            # Python package dependencies (see section below)
-│   ├── local.env                   # Local environment variables (not in version control)
-│   └── .env                        # Environment variables template (Git-tracked)
+│   ├── requirements.txt            # Python package dependencies (pinned)
+│   ├── local.env                   # Local environment overrides
+│   └── .env                        # Environment variables (GROQ_API_KEY, RESEARCH_OS_API_KEY, etc.)
 │
-├── 📄 ENTRY POINT & CLI
-│   ├── main.py                     # Primary CLI application
-│   │   ├── print_banner()          # Display application header
-│   │   ├── main()                  # Parse args, orchestrate pipeline
-│   │   │   ├── --ingest <path>     # Ingest and build index from PDF
-│   │   │   └── --query <text>      # Run single query
-│   │   ├── answer_query()          # Execute query, display results with sources
-│   │   └── INTERACTIVE MODE        # REPL loop for continuous querying
-│   │
-│   ├── test_gemini.py              # Test suite for Gemini API integration
-│   │   ├── API connectivity tests
-│   │   ├── Model inference tests
-│   │   └── Response parsing tests
-│   │
-│   └── Analyze-logs.py             # Query log analysis utility
-│       ├── Load logs/queries.jsonl (query history)
-│       ├── Analyze query patterns & drift
-│       └── Generate statistics & insights
+├── 📄 ENTRY POINTS
+│   ├── main.py                     # CLI application (interactive REPL + --ingest + --query)
+│   ├── run_api.py                  # FastAPI server launcher (uvicorn)
+│   └── verify_setup.py             # 22-section system verification (pre-flight checker)
 │
 ├── 📁 src/                         # MAIN SOURCE CODE PACKAGE
 │   │
-│   ├── 📁 rag/                     # RAG (Retrieval-Augmented Generation) Module
-│   │   │                           # Purpose: Core RAG functionality
+│   ├── 📁 rag/                     # RAG Core Module
 │   │   │
-│   │   ├── __init__.py             # Package initialization (exports key classes)
+│   │   ├── __init__.py             # Package exports (18 classes, v2.1.0)
 │   │   │
-│   │   ├── data_loader.py          # PDF TEXT EXTRACTION & CHUNKING
-│   │   │   │
-│   │   │   ├── extract_text_with_metadata()
-│   │   │   │   ├── Input: PDF file path
-│   │   │   │   ├── Process: Page-by-page extraction using marker-pdf
-│   │   │   │   └── Output: List of {text, metadata{page, source}} dicts
-│   │   │   │
-│   │   │   ├── split_text_smart(text, chunk_size, overlap_ratio)
-│   │   │   │   ├── Input: Raw text, target chunk size, overlap ratio
-│   │   │   │   ├── Process: Word-based splitting with overlap preservation
-│   │   │   │   │  └── Respects paragraph boundaries when possible
-│   │   │   │   └── Output: List of text chunks with start/end indices
-│   │   │   │
-│   │   │   └── load_and_chunk_pdf(pdf_path, chunk_size, overlap_ratio)
-│   │   │       ├── Input: PDF path, chunking parameters
-│   │   │       ├── Process: Extract → Split → Attach metadata to each chunk
-│   │   │       └── Output: List of {text, metadata{page, source, chunk_idx}} dicts
+│   │   ├── data_loader.py          # UNIVERSAL DOCUMENT LOADER
+│   │   │   ├── UniversalLoader     # Factory: routes files to format-specific parsers
+│   │   │   ├── PDFParser           # pymupdf4llm → markdown → section splitting
+│   │   │   ├── PythonParser        # Split by functions/classes
+│   │   │   ├── JupyterParser       # Code/markdown cells
+│   │   │   ├── MarkdownParser      # Split by headers
+│   │   │   ├── LaTeXParser         # Split by \section, \subsection
+│   │   │   ├── CppParser           # Brace-matched function extraction
+│   │   │   ├── TextParser          # Fallback plain text
+│   │   │   ├── Chunk               # Dataclass: content + ChunkType + metadata
+│   │   │   └── ChunkType           # Enum: code | theory | algorithm | theorem | proof | definition
 │   │   │
-│   │   ├── embedder.py             # TEXT EMBEDDING (SentenceTransformers)
-│   │   │   │
-│   │   │   ├── Embedder class
-│   │   │   │   ├── __init__(model_name: str)
-│   │   │   │   │   └── Loads SentenceTransformer model (default: all-MiniLM-L6-v2)
-│   │   │   │   │
-│   │   │   │   ├── encode(texts: List[str]) -> np.ndarray
-│   │   │   │   │   ├── Input: List of text strings
-│   │   │   │   │   ├── Process: Batch encode using SentenceTransformer
-│   │   │   │   │   └── Output: (N, 384) numpy array of embeddings
-│   │   │   │   │
-│   │   │   │   └── encode_single(text: str) -> np.ndarray
-│   │   │   │       ├── Input: Single text string
-│   │   │   │       ├── Process: Encode single text
-│   │   │   │       └── Output: (384,) numpy array embedding
-│   │   │   │
-│   │   │   └── Model Details:
-│   │   │       ├── Embedding Dimension: 384
-│   │   │       ├── Max Sequence Length: 512 tokens
-│   │   │       └── Inference: CPU or CUDA (auto-detected)
+│   │   ├── embedder.py             # TEXT EMBEDDING (FastEmbed / ONNX)
+│   │   │   ├── FastEmbedder        # Wraps fastembed.TextEmbedding
+│   │   │   │   ├── Model: sentence-transformers/all-MiniLM-L6-v2
+│   │   │   │   ├── Dimension: 384
+│   │   │   │   ├── embed()         # Batch embed with L2 normalization
+│   │   │   │   ├── embed_query()   # Single query embedding
+│   │   │   │   └── embed_documents()  # Batch document embedding
+│   │   │   └── get_embedder()      # Singleton accessor
 │   │   │
-│   │   ├── retriever.py            # HYBRID SEARCH (FAISS + BM25)
-│   │   │   │
-│   │   │   ├── Retriever class
-│   │   │   │   ├── __init__(embedding_dim: int = 384)
-│   │   │   │   │   ├── Initialize FAISS index (flat, no GPU)
-│   │   │   │   │   ├── Initialize BM25 ranker
-│   │   │   │   │   └── Initialize document storage
-│   │   │   │   │
-│   │   │   │   ├── add(documents: List[Dict])
-│   │   │   │   │   ├── Input: {text, metadata{page, source, ...}}
-│   │   │   │   │   ├── Process 1: Extract text & embed with SentenceTransformer
-│   │   │   │   │   ├── Process 2: Add embeddings to FAISS index
-│   │   │   │   │   ├── Process 3: Build BM25 corpus from texts
-│   │   │   │   │   └── Store original documents for retrieval
-│   │   │   │   │
-│   │   │   │   ├── search(query: str, k: int = 5) -> List[Dict]
-│   │   │   │   │   ├── Input: Query text, number of results
-│   │   │   │   │   ├── Process 1: Embed query text
-│   │   │   │   │   ├── Process 2: Search FAISS for top-k semantic matches
-│   │   │   │   │   ├── Process 3: Search BM25 for top-k keyword matches
-│   │   │   │   │   ├── Process 4: Merge & re-rank results (hybrid scoring)
-│   │   │   │   │   └── Output: Sorted list of {text, metadata, score}
-│   │   │   │   │
-│   │   │   │   ├── save(index_dir: str)
-│   │   │   │   │   ├── Save FAISS index to disk
-│   │   │   │   │   ├── Save documents to JSON/pickle
-│   │   │   │   │   └── Save BM25 corpus metadata
-│   │   │   │   │
-│   │   │   │   ├── load(index_dir: str) -> bool
-│   │   │   │   │   ├── Load FAISS index from disk
-│   │   │   │   │   ├── Load stored documents
-│   │   │   │   │   └── Rebuild BM25 ranker
-│   │   │   │   │
-│   │   │   │   └── filter_by_type(results, metadata_key, value)
-│   │   │   │       └── Filter search results by metadata field
-│   │   │   │
-│   │   │   └── Indexing Strategy:
-│   │   │       ├── FAISS: Flat L2 distance (no compression)
-│   │   │       ├── BM25: TF-IDF variant for sparse retrieval
-│   │   │       └── Hybrid: Weighted combination of both scores
+│   │   ├── retriever.py            # HYBRID SEARCH (FAISS + BM25 + FlashRank)
+│   │   │   ├── HybridRetriever
+│   │   │   │   ├── FAISS IndexFlatIP (inner product, 384-dim)
+│   │   │   │   ├── BM25Okapi sparse index
+│   │   │   │   ├── FlashRank cross-encoder reranker
+│   │   │   │   ├── search()                     # Hybrid search with RRF merge
+│   │   │   │   ├── search_by_type_filtered()    # Intent-based pre-filtering
+│   │   │   │   ├── _reciprocal_rank_fusion()    # RRF (k=60, FAISS: 0.7, BM25: 0.3)
+│   │   │   │   ├── save() / load()              # Full persistence (faiss.index, chunks.pkl, bm25.pkl)
+│   │   │   │   └── add_documents()              # Add chunks to both indices
+│   │   │   └── RetrievalResult     # Dataclass: chunk + score + rank + source
 │   │   │
-│   │   ├── generator.py            # LLM ANSWER GENERATION (Ollama)
-│   │   │   │
-│   │   │   ├── Generator class
-│   │   │   │   ├── __init__(model_name: str = "llama3.2:3b", 
-│   │   │   │   │             base_url: str = "http://localhost:11434")
-│   │   │   │   │   └── Initialize Ollama client
-│   │   │   │   │
-│   │   │   │   └── generate(query: str, context_chunks: List[str], 
-│   │   │   │                 num_ctx: int = 2048) -> str
-│   │   │   │       ├── Input: User query, list of context chunks
-│   │   │   │       ├── Process:
-│   │   │   │       │  1. Concatenate context chunks
-│   │   │   │       │  2. Build prompt with context + question
-│   │   │   │       │  3. Call Ollama API for generation
-│   │   │   │       │  4. Stream and assemble response
-│   │   │   │       └── Output: Complete generated answer string
-│   │   │   │
-│   │   │   └── Model Configuration:
-│   │   │       ├── Default Model: llama3.2:3b (3B parameters, 8GB RAM)
-│   │   │       ├── Alternative Models: llama2:7b, mistral:7b, neural-chat:7b
-│   │   │       ├── Context Window: 2048 tokens (configurable)
-│   │   │       └── Temperature: 0.7 (configurable for creativity vs accuracy)
+│   │   ├── generator.py            # LLM ANSWER GENERATION
+│   │   │   ├── ResearchArchitect
+│   │   │   │   ├── Primary: Groq API (llama-3.3-70b-versatile)
+│   │   │   │   ├── Fallback: Ollama (phi3:mini)
+│   │   │   │   ├── MAX_HISTORY_TURNS = 3 (sliding window)
+│   │   │   │   ├── generate_stream()    # Streaming token generation
+│   │   │   │   ├── generate()           # Non-streaming generation
+│   │   │   │   └── health_check()       # Backend connectivity test
+│   │   │   └── GenerationResult    # Dataclass: response + metadata
 │   │   │
 │   │   ├── pipeline.py             # RAG PIPELINE ORCHESTRATION
-│   │   │   │
-│   │   │   ├── RAGPipeline class
-│   │   │   │   ├── __init__()
-│   │   │   │   │   ├── Initialize Embedder
-│   │   │   │   │   ├── Initialize Generator
-│   │   │   │   │   ├── Initialize Retriever
-│   │   │   │   │   ├── Attempt to load existing index
-│   │   │   │   │   └── Setup logging (logs/queries.jsonl)
-│   │   │   │   │
-│   │   │   │   ├── build_index(pdf_path: str)
-│   │   │   │   │   ├── Input: Path to single PDF or directory
-│   │   │   │   │   ├── Process:
-│   │   │   │   │   │  1. Load & chunk PDF (data_loader)
-│   │   │   │   │   │  2. Embed chunks (embedder)
-│   │   │   │   │   │  3. Add to index (retriever)
-│   │   │   │   │   │  4. Persist index to disk
-│   │   │   │   │   └── Logging: Record ingestion timestamp & file size
-│   │   │   │   │
-│   │   │   │   ├── query(query_text: str, k: int = 3) -> List[Dict]
-│   │   │   │   │   ├── Input: Query string, number of results
-│   │   │   │   │   ├── Process:
-│   │   │   │   │   │  1. Retrieve top-k chunks (retriever.search)
-│   │   │   │   │   │  2. Log query to queries.jsonl
-│   │   │   │   │   │  3. Attach metadata (timestamp, chunk_count)
-│   │   │   │   │   └── Output: List of {text, metadata, score}
-│   │   │   │   │
-│   │   │   │   ├── ask(query_text: str, k: int = 3) -> Dict
-│   │   │   │   │   ├── Input: Query string, context chunk count
-│   │   │   │   │   ├── Process:
-│   │   │   │   │   │  1. Retrieve context: query(query_text, k)
-│   │   │   │   │   │  2. Generate answer: generator.generate(query, context)
-│   │   │   │   │   │  3. Assemble response with sources
-│   │   │   │   │   └── Output: {answer: str, sources: List[Dict], 
-│   │   │   │   │             metadata: {retrieval_time, generation_time}}
-│   │   │   │   │
-│   │   │   │   └── State Persistence:
-│   │   │   │       ├── Index Directory: indices/ (FAISS + documents)
-│   │   │       │       └── Query Log: logs/queries.jsonl
-│   │   │   │
-│   │   │   └── Workflow Diagram:
-│   │   │       PDF Input → Load & Chunk → Embed → FAISS/BM25 Index
-│   │   │       User Query → Retrieve → Generate → Return with Sources
+│   │   │   ├── ResearchPipeline
+│   │   │   │   ├── classify_intent()    # Smart query routing (code/theory/hybrid)
+│   │   │   │   ├── query()              # Full RAG: retrieve → generate → cite
+│   │   │   │   ├── query_stream()       # Streaming RAG with JSON-serializable chunks
+│   │   │   │   ├── ingest_pdf()         # Single file ingestion with MD5 dedup
+│   │   │   │   ├── ingest_directory()   # Batch directory ingestion
+│   │   │   │   ├── rebuild_index()      # Full reindex from scratch
+│   │   │   │   ├── save_index() / load_index()  # Persistence
+│   │   │   │   └── get_stats()          # Index statistics
+│   │   │   ├── PipelineConfig      # Dataclass: index_dir, enable_fallback, etc.
+│   │   │   ├── QueryResult         # Dataclass: response + intent + context + metadata
+│   │   │   ├── IngestionResult     # Dataclass: filename + status + chunks_added + hash
+│   │   │   ├── StreamChunk         # Dataclass: event + data (for SSE)
+│   │   │   └── create_pipeline()   # Factory function
 │   │   │
-│   │   ├── verifier.py             # CODE VERIFICATION UTILITY (Optional)
-│   │   │   │
-│   │   │   ├── ArchitectureVerifier class
-│   │   │   │   ├── __init__(safe_mode: bool = True)
-│   │   │   │   │   └── Enable/disable code execution sandbox
-│   │   │   │   │
-│   │   │   │   ├── extract_code_blocks(text: str) -> List[str]
-│   │   │   │   │   ├── Input: Markdown text from LLM response
-│   │   │   │   │   ├── Process: Parse ```python``` code fences
-│   │   │   │   │   └── Output: List of code block strings
-│   │   │   │   │
-│   │   │   │   ├── verify_dimensions(code: str) -> Dict
-│   │   │   │   │   ├── Input: Python code string
-│   │   │   │   │   ├── Process: Execute code, capture tensor shapes
-│   │   │   │   │   └── Output: {success: bool, shapes: Dict, errors: str}
-│   │   │   │   │
-│   │   │   │   └── Purpose: Validate ML code correctness
-│   │   │
-│   │   └── __pycache__/            # Python bytecode cache (auto-generated)
+│   │   └── verifier.py             # CODE VERIFICATION SANDBOX
+│   │       ├── ArchitectureVerifier
+│   │       │   ├── verify_dimensions()          # Execute code, extract tensor shapes
+│   │       │   ├── verify_generated_response()  # Verify all code blocks in LLM output
+│   │       │   ├── extract_code_blocks()        # Parse ```python``` fences
+│   │       │   ├── _is_safe()                   # Regex safety check (blocks os, subprocess, eval, exec)
+│   │       │   └── Timeout: SIGALRM-based (10s default)
+│   │       └── VerificationResult  # Dataclass: success + output + shapes + execution_time
 │   │
-│   ├── 📁 agents/                  # AGENT FRAMEWORK (Future Extension)
-│   │   └── [Empty - Planned for multi-step reasoning agents]
+│   ├── 📁 api/                     # FastAPI Backend Module
+│   │   ├── __init__.py             # Exports create_app()
+│   │   ├── main.py                 # App factory + lifespan (startup/shutdown)
+│   │   │   ├── create_app()        # FastAPI instance with CORS + routes
+│   │   │   └── CORS origins: localhost:5173, 5174, 3000
+│   │   ├── routes.py               # HTTP Endpoints
+│   │   │   ├── POST /v1/chat       # Streaming chat (SSE) with RAG
+│   │   │   ├── POST /v1/ingest/file    # Multipart file upload → background ingest
+│   │   │   ├── POST /v1/ingest/url     # URL download → background ingest
+│   │   │   ├── GET  /v1/ingest/status  # Ingestion task progress
+│   │   │   ├── GET  /v1/index/files    # List indexed documents
+│   │   │   └── GET  /health            # System health + backend status
+│   │   ├── dependencies.py         # Security & Singleton
+│   │   │   ├── PipelineState       # Global RAG pipeline singleton (lifespan-managed)
+│   │   │   └── verify_api_key()    # X-API-Key header → hmac.compare_digest (constant-time)
+│   │   └── ingestion_tracker.py    # Background task progress tracking
+│   │       ├── IngestionStage      # Enum: DOWNLOADING, PARSING, EMBEDDING, INDEXING, COMPLETE, FAILED
+│   │       └── tracker             # Global tracker instance
 │   │
-│   └── 📁 knowledge-graph/         # KNOWLEDGE GRAPH (Future Extension)
-│       └── [Empty - Planned for semantic relationship extraction]
+│   └── api.py                      # Legacy monolithic API (superseded by src/api/)
 │
 ├── 📁 scripts/                     # UTILITY SCRIPTS
-│   │
-│   ├── download_data.py            # DOWNLOAD KNOWLEDGE BASE PDFS
-│   │   ├── Purpose: Populate data/ directory with ML PDFs
-│   │   ├── Functions:
-│   │   │   ├── download_fundamentals()
-│   │   │   │   └── Downloads to data/01_fundamentals/
-│   │   │   │       └── Linear Algebra for Machine Learning (Part 1)
-│   │   │   │
-│   │   │   ├── download_papers()
-│   │   │   │   └── Downloads to data/02_papers/
-│   │   │   │       ├── "Attention Is All You Need" (Transformer)
-│   │   │   │       ├── "Deep Residual Learning for Image Recognition" (ResNet)
-│   │   │   │       ├── "Adam: A Method for Stochastic Optimization"
-│   │   │   │       ├── "Denoising Diffusion Probabilistic Models" (DDPM)
-│   │   │   │       └── "Dropout: A Simple Way to Prevent Neural Networks..."
-│   │   │   │
-│   │   │   └── download_implementations()
-│   │   │       └── Downloads to data/03_implementation/
-│   │   │           ├── Deep Learning with PyTorch (Book)
-│   │   │           └── The Little Book of Deep Learning
-│   │   │
-│   │   └── Execution: `python scripts/download_data.py`
-│   │
-│   └── ingest_batch.py             # BATCH PDF INGESTION
-│       ├── Purpose: Process all PDFs in data/ directory
-│       ├── Process:
-│       │   1. Scan data/01_fundamentals/, data/02_papers/, data/03_implementation/
-│       │   2. For each PDF:
-│       │   │  └── Load → Chunk → Embed → Add to index
-│       │   3. Save consolidated FAISS index to indices/
-│       │   4. Log ingestion results
-│       │
-│       └── Execution: `python scripts/ingest_batch.py`
+│   ├── download_data.py            # Download knowledge base PDFs
+│   ├── auto_download.py            # Auto-download + classify documents
+│   ├── ingest_batch.py             # Batch PDF ingestion
+│   ├── verify_setup.py             # Duplicate of root verify_setup.py
+│   ├── check_metadata.py           # Index metadata inspector
+│   ├── diagnose_index.py           # Index diagnostics
+│   └── Analyze-logs.py             # Query log analysis
 │
-├── 📁 tests/                       # UNIT & INTEGRATION TESTS
-│   │
-│   ├── test_data_loader.py         # DATA LOADING TESTS
-│   │   ├── test_paragraph_splitting()
-│   │   │   └── Verify text chunking respects paragraphs
-│   │   │
-│   │   ├── test_chunking_limit()
-│   │   │   └── Verify chunk sizes don't exceed limit
-│   │   │
-│   │   ├── test_overlap()
-│   │   │   └── Verify overlap ratio applied correctly
-│   │   │
-│   │   └── test_smart_behavior()
-│   │       └── Verify metadata attached to chunks
-│   │
-│   ├── test_hybrid_search.py       # RETRIEVAL TESTS
-│   │   ├── test_retriever_hybrid_integration()
-│   │   │   └── Verify FAISS + BM25 hybrid search works
-│   │   │
-│   │   └── test_save_load()
-│   │       └── Verify index persistence/loading
-│   │
-│   └── __pycache__/                # Python bytecode cache
+├── 📁 frontend/                    # REACT FRONTEND (Vite + Tailwind v3)
+│   ├── package.json                # npm config (React 19, Tailwind 3)
+│   ├── vite.config.js              # Vite build config
+│   ├── tailwind.config.js          # Tailwind theme (custom dark palette)
+│   ├── postcss.config.js           # PostCSS config
+│   ├── index.html                  # HTML entry point
+│   └── src/
+│       ├── main.jsx                # React entry point
+│       ├── App.jsx                 # Three-pane layout + session management
+│       │   ├── MAX_HISTORY_TURNS = 3 (mirrored from backend)
+│       │   ├── pushHistory()       # Sliding window history manager
+│       │   └── Health polling (30s interval)
+│       ├── api.js                  # API client
+│       │   ├── streamChat()        # SSE streaming via fetch + ReadableStream
+│       │   ├── uploadFile()        # Multipart file upload
+│       │   ├── ingestUrl()         # URL ingestion
+│       │   ├── fetchHealth()       # Health check
+│       │   └── API key via localStorage (X-API-Key header)
+│       ├── chatHistory.js          # Session persistence (localStorage, 50-session cap)
+│       ├── index.css               # Tailwind styles + custom theme
+│       └── components/
+│           ├── ChatPane.jsx        # Chat interface with streaming
+│           ├── MessageBubble.jsx   # Markdown renderer (react-markdown, KaTeX, highlight.js)
+│           ├── LeftPane.jsx        # Sidebar: sessions + file upload + URL ingest
+│           ├── SourcePane.jsx      # Source inspector (right pane)
+│           ├── ApiKeyModal.jsx     # API key configuration modal
+│           └── ChatHistoryPanel.jsx  # Chat history UI
 │
-├── 📁 notebooks/                   # JUPYTER NOTEBOOKS (Experimental/Dev)
-│   │
-│   ├── 1-text-extraction.ipynb     # PDF EXTRACTION EXPERIMENTS
-│   │   ├── Cell 1: Import libraries
-│   │   ├── Cell 2: Load PDF with marker-pdf
-│   │   ├── Cell 3: Extract text page-by-page
-│   │   └── Cell 4: Visualize text quality
-│   │
-│   ├── 2-embedding.ipynb           # EMBEDDING EXPERIMENTS
-│   │   ├── Cell 1: Load SentenceTransformer
-│   │   ├── Cell 2: Embed sample texts
-│   │   ├── Cell 3: Compute cosine similarity
-│   │   └── Cell 4: Visualize embeddings (t-SNE/UMAP)
-│   │
-│   └── [Root-level duplicates for quick access]
-│       ├── 1-text-extraction.ipynb
-│       └── 2-embedding.ipynb
+├── 📁 backend/                     # BACKEND MODELS
+│   └── models/                     # ML model storage
 │
 ├── 📁 data/                        # DATA & KNOWLEDGE BASE
-│   │
-│   ├── 📄 sample.pdf               # Sample test PDF
-│   ├── 📄 terminal.pdf             # Terminal/shell concepts PDF
-│   │
-│   ├── 📁 chunks/                  # PROCESSED TEXT CHUNKS
-│   │   └── terminal_chunks.jsonl   # Chunked text from terminal.pdf
-│   │       └── Format: One JSON object per line
-│   │           └── {text: str, metadata: {page: int, source: str, chunk_idx: int}}
-│   │
-│   ├── 📁 01_fundamentals/         # FUNDAMENTAL ML RESOURCES
-│   │   └── linear_algebra_for_ml_part1.pdf
-│   │       └── Topics: Vectors, matrices, decomposition
-│   │
-│   ├── 📁 02_papers/               # SEMINAL RESEARCH PAPERS
-│   │   ├── attention_is_all_you_need.pdf
-│   │   │   └── Transformers, multi-head attention
-│   │   ├── resnet.pdf
-│   │   │   └── Residual networks, skip connections
-│   │   ├── adam_optimizer.pdf
-│   │   │   └── Adaptive learning rates for optimization
-│   │   ├── ddpm_diffusion.pdf
-│   │   │   └── Denoising diffusion probabilistic models
-│   │   └── dropout_srivastava14a.pdf
-│   │       └── Regularization technique for neural networks
-│   │
-│   └── 📁 03_implementation/       # IMPLEMENTATION GUIDES
-│       ├── deep_learning_with_pytorch.pdf
-│       │   └── PyTorch fundamentals, training loops, models
-│       └── the_little_book_of_deep_learning.pdf
-│           └── Deep learning principles, architectures, best practices
+│   ├── 📁 01_fundamentals/         # Fundamental ML resources
+│   ├── 📁 02_papers/               # Research papers
+│   ├── 📁 03_implementation/       # Implementation guides
+│   ├── 📁 04_misc/                 # Uploaded / miscellaneous files
+│   └── 📁 index/                   # PERSISTED SEARCH INDICES
+│       ├── faiss.index             # FAISS vector database (384-dim, IndexFlatIP)
+│       ├── chunks.pkl              # Chunk objects (pickle)
+│       ├── chunk_texts.pkl         # Raw text for BM25
+│       ├── bm25.pkl                # BM25 sparse index (pickle)
+│       ├── config.json             # Index config (n_chunks, dimension, model)
+│       └── processed_files.json    # Ingestion ledger (filename → MD5 hash + chunks + timestamp)
 │
-├── 📁 indices/                     # PERSISTED SEARCH INDICES (Generated)
-│   ├── faiss.index                 # FAISS vector database
-│   │   └── Contains embeddings for all chunks
-│   ├── documents.json              # Original chunk documents + metadata
-│   │   └── Array of {text, metadata} objects
-│   └── bm25_metadata.pkl           # BM25 corpus metadata (pickle)
+├── 📁 tests/                       # UNIT & INTEGRATION TESTS
+│   ├── test_data_loader.py         # Chunking, metadata, format detection
+│   └── test_hybrid_search.py       # Index persistence, hybrid ranking
+│
+├── 📁 notebooks/                   # JUPYTER NOTEBOOKS
+│   ├── 1-text-extraction.ipynb     # PDF extraction experiments
+│   └── 2-embedding.ipynb           # Embedding experiments
 │
 ├── 📁 logs/                        # QUERY LOGS & ANALYTICS
-│   │
-│   ├── queries.jsonl               # QUERY HISTORY LOG
-│   │   ├── Format: One JSON object per line
-│   │   ├── Fields: {
-│   │   │     timestamp: str (ISO 8601),
-│   │   │     query: str,
-│   │   │     retrieval_time: float (seconds),
-│   │   │     generation_time: float (seconds),
-│   │   │     num_chunks_retrieved: int,
-│   │   │     model_used: str
-│   │   │   }
-│   │   └── Purpose: Track query patterns, performance, user interactions
-│   │
-│   └── [Additional logs]: errors.log, warnings.log (optional)
 │
-├── 📁 backend/                     # BACKEND API (Future)
-│   └── [Empty - Planned for FastAPI/Flask REST API]
+├── 📁 .cache/                      # MODEL CACHES
+│   └── flashrank/                  # FlashRank reranker model
+│       └── ms-marco-TinyBERT-L-2-v2/
+│           ├── flashrank-TinyBERT-L-2-v2.onnx
+│           ├── tokenizer.json
+│           └── config.json
 │
-├── 📁 frontend/                    # FRONTEND UI (Future)
-│   └── [Empty - Planned for React/Vue web interface]
+├── .vscode/                        # IDE SETTINGS
+│   └── settings.json               # Python interpreter + conda auto-activation
 │
-├── 📁 docs/                        # DOCUMENTATION (Future)
-│   └── [Empty - Planned for API docs, guides, examples]
-│
-├── .vscode/                        # VS CODE SETTINGS
-│   ├── launch.json                 # Debugger configuration
-│   ├── settings.json               # Editor settings
-│   └── extensions.json             # Recommended extensions
-│
-├── .ipynb_checkpoints/             # Jupyter checkpoints (auto-generated)
-│
-├── .pytest_cache/                  # Pytest cache (auto-generated)
-│
-├── .git/                           # Git repository metadata
-│
-└── System Volume Information/      # Windows system folder (ignore)
-
+└── .github/                        # GitHub workflows
 ```
 
 ---
@@ -387,48 +210,47 @@ ai-knowledge-assistant/
 ## 🔗 Data Flow Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        USER INTERACTION                             │
-│  CLI (main.py) → Interactive REPL / --ingest / --query              │
-└──────────────────────────┬──────────────────────────────────────────┘
-                           │
-          ┌────────────────┴────────────────┐
-          ▼                                  ▼
-    ┌──────────────┐              ┌──────────────────┐
-    │ INDEX BUILD  │              │  QUERY EXECUTION │
-    └──────────────┘              └──────────────────┘
-          │                              │
-          ▼                              ▼
-    ┌──────────────────────┐      ┌──────────────────────┐
-    │ data_loader.py       │      │ retriever.search()   │
-    │ (PDF → Chunks)       │      │ (FAISS + BM25)       │
-    └──────────┬───────────┘      └──────────┬───────────┘
-               │                             │
-               ▼                             ▼
-    ┌──────────────────────┐      ┌──────────────────────┐
-    │ embedder.encode()    │      │ Retrieved Chunks     │
-    │ (Text → Embeddings)  │      │ (Top-k Results)      │
-    └──────────┬───────────┘      └──────────┬───────────┘
-               │                             │
-               ▼                             ▼
-    ┌──────────────────────┐      ┌──────────────────────┐
-    │ retriever.add()      │      │ generator.generate() │
-    │ (Build Indices)      │      │ (LLM → Answer)       │
-    └──────────┬───────────┘      └──────────┬───────────┘
-               │                             │
-               ▼                             ▼
-    ┌──────────────────────┐      ┌──────────────────────┐
-    │ retriever.save()     │      │ Format Response      │
-    │ (Persist Indices)    │      │ (Answer + Sources)   │
-    └──────────┬───────────┘      └──────────┬───────────┘
-               │                             │
-               └────────────────┬────────────┘
-                                │
-                                ▼
-                        ┌──────────────────┐
-                        │ Output to User   │
-                        │ (CLI Display)    │
-                        └──────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          USER INTERACTION                                     │
+│  CLI (main.py) │ React Frontend (port 5173) │ API Docs (/docs)               │
+└────────────┬──────────────────┬───────────────────────────────┬──────────────┘
+             │                  │                               │
+             │           FastAPI Backend (port 8000)            │
+             │           X-API-Key auth + SSE streaming         │
+             │                  │                               │
+       ┌─────┴──────┐    ┌─────┴──────┐              ┌────────┴────────┐
+       │ INGESTION   │    │   QUERY    │              │  HEALTH/STATS   │
+       └─────────────┘    └────────────┘              └─────────────────┘
+             │                  │
+             ▼                  ▼
+  ┌────────────────────┐  ┌──────────────────────────┐
+  │ UniversalLoader    │  │ classify_intent(query)   │
+  │ (PDF/LaTeX/C++/    │  │ → code | theory | hybrid │
+  │  Python/Jupyter/   │  └──────────┬───────────────┘
+  │  Markdown)         │             │
+  └────────┬───────────┘             ▼
+           │              ┌──────────────────────────┐
+           ▼              │ HybridRetriever          │
+  ┌────────────────────┐  │  ├─ FAISS (semantic)     │
+  │ FastEmbedder       │  │  ├─ BM25  (keyword)      │
+  │ (all-MiniLM-L6-v2) │  │  ├─ RRF merge (k=60)    │
+  │ → 384-dim vectors  │  │  └─ FlashRank rerank     │
+  └────────┬───────────┘  └──────────┬───────────────┘
+           │                         │
+           ▼                         ▼
+  ┌────────────────────┐  ┌──────────────────────────┐
+  │ Add to FAISS +     │  │ ResearchArchitect        │
+  │ BM25 indices       │  │  ├─ Groq (primary)       │
+  └────────┬───────────┘  │  ├─ Ollama (fallback)    │
+           │              │  └─ 3-turn memory window  │
+           ▼              └──────────┬───────────────┘
+  ┌────────────────────┐             │
+  │ Save to data/index │             ▼
+  │ + update ledger    │  ┌──────────────────────────┐
+  │ (MD5 hash tracking)│  │ SSE Stream → Frontend    │
+  └────────────────────┘  │ (start → context →       │
+                          │  chunks → sources → done) │
+                          └──────────────────────────┘
 ```
 
 ---
@@ -437,79 +259,100 @@ ai-knowledge-assistant/
 
 ### 1. **Data Ingestion Pipeline**
 ```
-PDF File
-  ↓ data_loader.load_and_chunk_pdf()
-  ├─ Extract text + metadata (page, source)
-  ├─ Split into chunks (smart word-based)
-  └─ Return: List[{text, metadata}]
-    ↓ pipeline.build_index()
-    ├─ Pass chunks to embedder.encode()
-    ├─ embedder calls SentenceTransformer
-    └─ Returns: List[embedding_vector]
-      ↓ retriever.add()
-      ├─ Add to FAISS index (flat L2)
-      ├─ Build BM25 corpus
-      └─ Persist: indices/faiss.index, indices/documents.json
+Document (PDF / .py / .tex / .cpp / .ipynb / .md)
+  ↓ UniversalLoader.load_file()
+  ├─ Route to format-specific parser (PDFParser, CppParser, etc.)
+  ├─ Extract text → create Chunk objects with ChunkType + metadata
+  └─ Return: List[Chunk]
+    ↓ ResearchPipeline.ingest_pdf()
+    ├─ Compute MD5 hash → check ledger for duplicates
+    ├─ Embed chunks via FastEmbedder (384-dim, L2-normalized)
+    └─ Add to HybridRetriever (FAISS + BM25)
+      ↓ save_index()
+      ├─ Persist: data/index/faiss.index, chunks.pkl, bm25.pkl
+      ├─ Write: data/index/config.json
+      └─ Update: data/index/processed_files.json (ledger)
 ```
 
 ### 2. **Query & Retrieval Pipeline**
 ```
 User Query (string)
-  ↓ pipeline.query(query_text, k=3)
-  ├─ embedder.encode_single(query_text)
-  │  └─ Returns: 1D embedding vector
-  ├─ retriever.search(query_text, k=3)
-  │  ├─ FAISS search: L2 distance → top-3 semantic matches
-  │  ├─ BM25 search: TF-IDF → top-3 keyword matches
-  │  └─ Merge & rank: Combined hybrid score
-  ├─ Log to logs/queries.jsonl
-  └─ Return: List[{text, metadata, score}]
+  ↓ ResearchPipeline.query(question, history, filter_type)
+  ├─ classify_intent(query)  →  code | theory | hybrid
+  ├─ HybridRetriever.search_by_type_filtered(query, top_k, intent)
+  │  ├─ FAISS search: inner product → top-k semantic matches
+  │  ├─ BM25 search: Okapi BM25 → top-k keyword matches
+  │  ├─ Reciprocal Rank Fusion (k=60, FAISS: 0.7, BM25: 0.3)
+  │  └─ FlashRank cross-encoder reranking
+  └─ Return: List[RetrievalResult] (sorted by score)
 ```
 
 ### 3. **Answer Generation Pipeline**
 ```
-(Query, Retrieved Chunks)
-  ↓ pipeline.ask(query, context_chunks)
-  ├─ Concatenate chunk texts
-  ├─ Build prompt: "Context: ...\n\nQuestion: {query}\n\nAnswer:"
-  ├─ generator.generate(query, chunks)
-  │  ├─ Call Ollama API
-  │  ├─ Stream response tokens
-  │  └─ Assemble full answer
-  ├─ Format response dict:
-  │  ├─ answer: str
-  │  ├─ sources: List[{text, metadata}]
-  │  └─ metadata: {retrieval_time, generation_time}
-  └─ Return: Response dict
-    ↓ Display to user with formatted output
+(Query, Retrieved Chunks, History)
+  ↓ ResearchArchitect.generate_stream()
+  ├─ Build conversation: system prompt + history[-6:] + context + query
+  ├─ Primary: Groq API (llama-3.3-70b-versatile)
+  │  └─ Fallback: Ollama (phi3:mini) if Groq fails
+  ├─ Stream tokens via SSE events
+  └─ Post-process: strip hallucinated sources, inject metadata-based citations
+    ↓ Deliver via EventSourceResponse to frontend
 ```
 
 ---
 
 ## 📦 Dependencies & Requirements
 
-### Core Dependencies
+### Core RAG Packages
 ```
-ollama              # Local LLM inference client
-faiss-cpu          # Vector similarity search (CPU-only)
-sentence-transformers  # Text embeddings
-marker-pdf         # High-quality PDF text extraction
-numpy              # Numerical computations
-rank-bm25          # BM25 keyword ranking
-python-dotenv      # Environment variable management
+pymupdf4llm        # PDF → markdown extraction
+pymupdf (fitz)     # PDF parsing engine
+fastembed           # ONNX-based text embeddings (all-MiniLM-L6-v2)
+faiss-cpu           # Vector similarity search (CPU-only)
+rank-bm25           # BM25 keyword ranking
+flashrank           # Cross-encoder reranking (TinyBERT)
+numpy (<2.0.0)      # Numerical computations
+groq                # Groq cloud LLM API client
+ollama              # Local LLM fallback client
+pydantic            # Data validation
+python-dotenv       # Environment variable management
+```
+
+### API Packages
+```
+fastapi             # Web framework
+uvicorn             # ASGI server
+sse-starlette       # Server-Sent Events support
+python-multipart    # File upload handling
+```
+
+### Frontend Packages (npm)
+```
+react (^19.2.0)     # UI framework
+react-markdown      # Markdown rendering
+remark-math         # Math notation parsing
+rehype-katex        # KaTeX rendering
+katex               # Math typesetting
+highlight.js        # Code syntax highlighting
+lucide-react        # Icons
+tailwindcss (^3.4)  # Utility-first CSS (v3)
 ```
 
 ### Development Dependencies
 ```
-pytest             # Unit testing framework
-jupyter            # Interactive notebooks
+pytest              # Unit testing
+pytest-asyncio      # Async test support
+jupyter             # Interactive notebooks
+httpx               # HTTP testing client
 ```
 
 ### System Requirements
-- **Python**: 3.8+ (tested on 3.10)
-- **RAM**: 8+ GB (for Ollama model + FAISS index)
-- **GPU**: Optional (CUDA for faster embeddings)
-- **Ollama**: Installed and running on localhost:11434
+- **Python**: 3.10+ (tested on 3.10)
+- **RAM**: 16 GB (optimized for FAISS + BM25 + embedder in-memory)
+- **GPU**: Not required (ONNX CPU inference via FastEmbed)
+- **Ollama**: Optional fallback — `ollama serve` on localhost:11434
+- **Groq API Key**: Required for primary LLM generation
+- **Node.js**: 18+ (for frontend)
 
 ---
 
@@ -519,17 +362,23 @@ jupyter            # Interactive notebooks
 ```bash
 # Clone repository
 git clone <repo-url>
-cd ai-knowledge-assistant
+cd Research-OS
 
-# Create virtual environment (conda)
-conda create -n rag python=3.10
-conda activate rag
+# Create conda environment
+conda create -n Research-OS python=3.10
+conda activate Research-OS
 
-# Install dependencies
+# Install Python dependencies
 pip install -r requirements.txt
 
-# Download Ollama model
-ollama pull llama3.2:3b
+# Install frontend dependencies
+cd frontend && npm install && cd ..
+
+# Set environment variables
+cp .env.example .env   # Edit with your GROQ_API_KEY
+
+# Verify everything
+python verify_setup.py
 
 # Download knowledge base PDFs
 python scripts/download_data.py
@@ -540,20 +389,23 @@ python scripts/ingest_batch.py
 
 ### Usage Modes
 
-#### 1. Interactive Mode
+#### 1. Interactive CLI Mode
 ```bash
 python main.py
-# Type queries and get answers with source attribution
 ```
 
-#### 2. Single Query Mode
+#### 2. API Server + Frontend
 ```bash
-python main.py --query "What is attention mechanism?"
+# Terminal 1: Start API
+python run_api.py
+
+# Terminal 2: Start frontend
+cd frontend && npm run dev
 ```
 
-#### 3. Ingest + Query
+#### 3. Single Query (CLI)
 ```bash
-python main.py --ingest data/sample.pdf --query "What is transformer?"
+python main.py --query "What is the attention mechanism?"
 ```
 
 #### 4. Batch Ingestion
@@ -561,56 +413,52 @@ python main.py --ingest data/sample.pdf --query "What is transformer?"
 python scripts/ingest_batch.py
 ```
 
-#### 5. Testing
+#### 5. System Verification
 ```bash
-pytest tests/
+python verify_setup.py
 ```
 
-#### 6. Notebook Exploration
+#### 6. Testing
 ```bash
-jupyter notebook notebooks/
-# Open 1-text-extraction.ipynb or 2-embedding.ipynb
+pytest tests/
 ```
 
 ---
 
 ## 🔧 Configuration & Extensibility
 
-### Environment Variables (local.env)
+### Environment Variables (.env)
 ```bash
-OLLAMA_MODEL=llama3.2:3b           # LLM model name
-OLLAMA_BASE_URL=http://localhost:11434  # Ollama server URL
-EMBEDDING_MODEL=all-MiniLM-L6-v2   # SentenceTransformer model
-CHUNK_SIZE=256                     # Text chunk size (words)
-CHUNK_OVERLAP=0.1                  # Overlap ratio (0.1 = 10%)
-CONTEXT_WINDOW=2048                # LLM context window (tokens)
-LOG_LEVEL=INFO                     # Logging level
+GROQ_API_KEY=gsk_...                  # Groq API key (required for primary LLM)
+RESEARCH_OS_API_KEY=...               # API authentication key
+API_URL=http://localhost:8000         # Backend URL
+RESEARCH_OS_INDEX_DIR=data/index      # Index storage directory
+RESEARCH_OS_CORS_ORIGINS=*            # CORS policy (overridden in src/api/main.py)
 ```
 
-### Customization Points
+### Key Configuration Points
 
-**Change LLM Model**:
+**Change LLM Model** (generator.py):
 ```python
-# In src/rag/generator.py
-generator = Generator(model_name="mistral:7b")
+MODEL = "llama-3.3-70b-versatile"     # Groq primary
+FALLBACK_MODEL = "phi3:mini"          # Ollama fallback
 ```
 
-**Change Embedding Model**:
+**Adjust Hybrid Search Weights** (retriever.py):
 ```python
-# In src/rag/pipeline.py
-embedder = Embedder(model_name="sentence-transformers/all-mpnet-base-v2")
+self.faiss_weight = 0.7               # Semantic search weight
+self.bm25_weight = 0.3                # Keyword search weight
 ```
 
-**Adjust Chunking Parameters**:
+**Change Embedding Model** (embedder.py):
 ```python
-# In src/rag/pipeline.py
-pipeline.build_index(pdf_path, chunk_size=512, overlap_ratio=0.2)
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_DIM = 384
 ```
 
-**Change Search Strategy**:
+**Adjust Memory Window** (generator.py + App.jsx):
 ```python
-# In src/rag/retriever.py
-results = retriever.search(query, k=10)  # Return top-10 instead of 5
+MAX_HISTORY_TURNS = 3                 # 3 user+assistant turn pairs = 6 messages
 ```
 
 ---
@@ -619,45 +467,31 @@ results = retriever.search(query, k=10)  # Return top-10 instead of 5
 
 | Operation | Time | Notes |
 |-----------|------|-------|
-| PDF Ingestion (10 pages) | 5-10s | Includes chunking + embedding |
-| Embedding Single Text | ~20ms | CPU inference, varies by text length |
-| FAISS Search (1M vectors) | ~5ms | L2 distance, flat index |
-| BM25 Search | ~10ms | TF-IDF ranking |
-| Hybrid Search | ~15ms | Combined FAISS + BM25 |
-| LLM Generation | 5-30s | Depends on output length + model |
-| Full RAG Query | 10-40s | Retrieve + Generate |
+| PDF Ingestion (10 pages) | 5-10s | pymupdf4llm + embedding |
+| Embedding Single Text | ~10ms | FastEmbed ONNX (CPU) |
+| FAISS Search (3845 chunks) | ~2ms | Inner product, flat index |
+| BM25 Search | ~5ms | Okapi BM25 ranking |
+| RRF Merge + FlashRank Rerank | ~20ms | Cross-encoder reranking |
+| Full Hybrid Search | ~30ms | FAISS + BM25 + RRF + rerank |
+| LLM Generation (Groq) | 1-5s | Cloud API, streaming |
+| LLM Generation (Ollama) | 5-30s | Local fallback, CPU |
+| Full RAG Query | 2-10s | Retrieve + Generate (Groq) |
 
 ---
 
 ## 🧪 Testing Strategy
 
 ### Unit Tests
-- **test_data_loader.py**: Chunking logic, metadata preservation
-- **test_hybrid_search.py**: Index persistence, hybrid ranking
+- **test_data_loader.py**: Chunking logic, metadata preservation, format detection
+- **test_hybrid_search.py**: Index persistence, hybrid ranking, RRF correctness
 
-### Integration Tests
-- End-to-end PDF ingestion + query + generation
+### System Verification
+- **verify_setup.py**: 22-section pre-flight checker (Python, env vars, packages, source files, index, FlashRank, imports, embedder, generator, pipeline, syntax, frontend, network, CORS, security)
 
 ### Manual Testing
 - Interactive CLI testing
-- Verify source attribution accuracy
-- Check generation quality on test queries
-
----
-
-## 🔮 Future Extensions
-
-### Planned Features
-1. **Backend API**: FastAPI REST endpoints
-2. **Frontend UI**: React/Vue web interface
-3. **Agents Framework**: Multi-step reasoning agents
-4. **Knowledge Graph**: Automatic relationship extraction
-5. **Advanced Retrieval**: MMR (Maximal Marginal Relevance), re-ranking
-6. **Multi-Modal**: Support for images in PDFs
-7. **Streaming UI**: Real-time token streaming to client
-8. **Fine-tuning**: Custom embeddings/LLM fine-tuning
-9. **Monitoring**: Query performance analytics, user feedback loops
-10. **Caching**: Query result caching for common questions
+- API endpoint testing via `/docs` (Swagger UI)
+- Frontend SSE streaming validation
 
 ---
 
@@ -666,24 +500,28 @@ results = retriever.search(query, k=10)  # Return top-10 instead of 5
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | "No module named 'faiss'" | FAISS not installed | `pip install faiss-cpu` |
-| "Connection refused to Ollama" | Ollama not running | `ollama serve` in separate terminal |
-| "CUDA out of memory" | GPU memory exceeded | Use CPU embeddings: remove CUDA |
-| "PDF extraction failed" | Corrupted PDF or unsupported format | Try with sample.pdf |
+| "GROQ_API_KEY not set" | Missing env var | Set in `.env` or `export GROQ_API_KEY='gsk_...'` |
+| "Pipeline not initialized" | API started without index | Run `python scripts/ingest_batch.py` first |
+| "CORS error in browser" | Frontend origin not allowed | Check `src/api/main.py` CORS origins |
+| "401 Missing API key" | No X-API-Key header | Set API key in frontend settings modal |
 | "Index not found" | No ingestion completed | Run `python scripts/ingest_batch.py` |
-| "Slow query response" | Large context window or slow LLM | Reduce `k` parameter or use faster model |
+| "Slow query response" | Using Ollama fallback | Check Groq API key and connectivity |
+| "Import errors" | Wrong conda env | `conda activate Research-OS` |
 
 ---
 
 ## 📄 License & Attribution
 
-- **Framework**: LLaMA 2 / Llama 3.2
-- **Embeddings**: Hugging Face Sentence Transformers
+- **LLM**: Meta LLaMA 3.3 (via Groq), Microsoft Phi-3 (via Ollama)
+- **Embeddings**: FastEmbed (ONNX) / Sentence Transformers
 - **Vector DB**: Meta FAISS
-- **PDF Extraction**: Unified-IO Marker-PDF
+- **PDF Extraction**: pymupdf4llm
+- **Reranking**: FlashRank (ms-marco-TinyBERT-L-2-v2)
 - **BM25**: Rank-bm25 library
+- **Frontend**: React 19, Tailwind CSS 3, Vite
 
 ---
 
-**Last Updated**: February 7, 2026
-**Version**: 1.0 (Production Ready)
-**Maintainers**: AI Knowledge Assistant Team
+**Last Updated**: February 12, 2026
+**Version**: 2.1.0
+**Maintainers**: Research-OS Team

@@ -26,6 +26,9 @@ aiofiles>=23.2.0
 python-dateutil>=2.8.2
 xxhash>=3.4.0
 flashrank>=0.2.0
+sentence-transformers>=3.0.0
+torch>=2.0.0
+nltk>=3.8.1
 
 # =============================================================================
 # API BACKEND
@@ -35,3 +38,8 @@ uvicorn[standard]>=0.27.0
 sse-starlette>=1.8.0
 python-multipart>=0.0.9
 pydantic>=2.5.0
+
+# --- Audit & Metrics ---
+sentence-transformers>=2.2.2
+flashrank>=0.2.0
+numpy

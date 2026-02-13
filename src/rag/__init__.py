@@ -24,6 +24,7 @@ from .embedder import FastEmbedder, get_embedder
 from .retriever import HybridRetriever, RetrievalResult
 from .generator import ResearchArchitect, GenerationResult
 from .verifier import ArchitectureVerifier, VerificationResult
+from .evaluator import RAGEvaluator
 from .pipeline import (
     ResearchPipeline,
     PipelineConfig,
@@ -61,6 +62,8 @@ __all__ = [
     # Verification
     "ArchitectureVerifier",
     "VerificationResult",
+    # Evaluation
+    "RAGEvaluator",
     # Pipeline
     "ResearchPipeline",
     "PipelineConfig",

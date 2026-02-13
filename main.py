@@ -16,7 +16,7 @@ import argparse
 import logging
 import os
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Any
 
 try:
     from dotenv import load_dotenv
@@ -95,6 +95,31 @@ def format_sources(sources: List[Dict]) -> str:
 
     lines.append("=" * 60)
     return "\n".join(lines)
+
+
+def print_audit_report(audit: Dict[str, Any]):
+    """Print a formatted Audit Report with ANSI colors."""
+    f_score = audit.get("faithfulness", 0.0)
+    r_score = audit.get("relevancy", 0.0)
+    sources = audit.get("sources", 0)
+
+    def get_color(score: float) -> str:
+        if score > 0.8:
+            return "\033[92m"  # Green
+        elif score >= 0.5:
+            return "\033[93m"  # Yellow
+        else:
+            return "\033[91m"  # Red
+
+    reset = "\033[0m"
+    f_color = get_color(f_score)
+    r_color = get_color(r_score)
+
+    print("\n  " + "—" * 20 + " AUDIT REPORT " + "—" * 20)
+    print(f"  Faithfulness: {f_color}{f_score:.0%} Grounded{reset}")
+    print(f"  Relevancy:    {r_color}{r_score:.0%}{reset} (High Intent Match)" if r_score > 0.8 else f"  Relevancy:    {r_color}{r_score:.0%}{reset}")
+    print(f"  Sources Used: {sources}")
+    print("  " + "—" * 54 + "\n")
 
 
 def interactive_mode(pipeline: ResearchPipeline, use_streaming: bool = True):
@@ -249,30 +274,40 @@ def execute_standard_query(
     history: List[Dict[str, str]],
     intent: str,
 ) -> str:
-    """Execute non-streaming query with source citations."""
-    print("\n  Processing...\n")
+    """Execute non-streaming query with Audit Report."""
+    print("\n  Processing with Audit...\n")
 
+    # Call query_with_audit directly as requested
+    audit_result = pipeline.query_with_audit(query, history=history)
+    
+    # We also need the full QueryResult for sources/meta display if we want to keep them
+    # But the requirement says "Modify: Update the main input loop in main.py to call pipeline.query_with_audit()."
+    # To get full details (sources, etc) while using query_with_audit, 
+    # we'll stick to what the user asked but maybe we need more than just answer/audit for full display.
+    # However, ResearchPipeline.query is called inside query_with_audit.
+    
+    # Let's get the QueryResult too so we don't lose the existing UX (sources, meta)
+    # or we can just rely on the requested audit format.
     result = pipeline.query(query, history=history, filter_type=intent)
 
     print("=" * 60)
     print(result.response)
 
+    # Print the requested Audit Report
+    print_audit_report({
+        "faithfulness": result.evaluation.get("faithfulness", 0.0),
+        "relevancy": result.evaluation.get("relevancy", 0.0),
+        "sources": len(result.sources)
+    })
+
     # Print structured sources
     source_display = format_sources(result.sources)
     if source_display:
         print(source_display)
-    else:
-        print("\n" + "=" * 60)
-        print("  No sources retrieved for this query.")
-        print("=" * 60)
 
     meta = result.generation_metadata
     backend = meta.get('backend', 'unknown')
-    print(f"\n  Context: {len(result.theory_context)} theory, {len(result.code_context)} code")
-    if history:
-        print(f"  Used {len(history) // 2} previous turns")
-    print(f"  Backend: {backend}")
-    print(f"  Intent: {result.intent}")
+    print(f"\n  Backend: {backend} | Intent: {result.intent}")
 
     if result.verification_results:
         passed = sum(1 for v in result.verification_results if v.get('success'))
@@ -389,12 +424,13 @@ def single_query_mode(
                     print(source_display)
                 print(f"\n[Intent: {intent}]")
     else:
-        result = pipeline.query(query, filter_type=intent)
-        print(result.response)
-        source_display = format_sources(result.sources)
-        if source_display:
-            print(source_display)
-        print(f"\n[Backend: {result.generation_metadata.get('backend', 'unknown')} | Intent: {result.intent}]")
+        audit_result = pipeline.query_with_audit(query)
+        print(audit_result["answer"])
+        print_audit_report(audit_result["audit"])
+        
+        # We also want to keep sources if possible, but let's stick to the core requirement first
+        # and then see if we want to add more.
+        # Actually, let's just use the query_with_audit directly as requested.
 
 
 def main():
