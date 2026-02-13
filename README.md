@@ -1,326 +1,123 @@
 # 🧠 Research-OS
 
 <p align="center">
-
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
-![License](https://img.shields.io/badge/License-Available-green)
-![Status](https://img.shields.io/badge/Status-Active-success)
-![Backend](https://img.shields.io/badge/Backend-RAG%20Engine-orange)
-
+  <img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/FastAPI-0.100+-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/React-18.0+-61DAFB?style=flat-square&logo=react&logoColor=white" alt="React">
+  <img src="https://img.shields.io/badge/Status-Active-success?style=flat-square" alt="Status">
+  <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
 </p>
 
 ## The Research Orchestration System for Machine Learning
 
+Research-OS is a specialized Retrieval-Augmented Generation (RAG) engine designed to bridge the gap between **Mathematical Theory** (Research Papers) and **Python Implementation** (Source Code). 
+
+Unlike generic "Chat with PDF" tools, Research-OS treats code and mathematics as first-class citizens. It preserves LaTeX formatting, enforces code integrity, and provides deep reasoning audits for every response.
 
 ---
 
-Research-OS is a specialized Retrieval-Augmented Generation (RAG) engine designed to bridge the gap between Mathematical Theory (Research Papers) and Python Implementation (Source Code).
+## 🚀 The Core Upgrades
 
-Unlike generic "Chat with PDF" tools, Research-OS treats code and mathematics as distinct data types. It preserves LaTeX formatting, enforces code integrity, and verifies generated architectures against runtime errors.
+### 1. Semantic Query Caching
+Optimized for performance and cost. The system uses a **FAISS-powered Semantic Cache** with a **0.95 similarity threshold**. If a similar query has been asked before, the system retrieves the response instantly, bypassing the LLM generation step while maintaining accuracy.
 
----
+### 2. Conceptual / CoT Auditor
+Every response undergoes a rigorous **Chain-of-Thought (CoT) Audit** using `llama-3.3-70b-versatile`. This "Senior Research Auditor" layer verifies that the AI's logic aligns perfectly with the retrieved mathematical theory, providing a transparent "Reasoning" string for the user.
 
-## 🚀 The Problem
-
-Machine Learning research involves two distinct languages:
-
-**The Abstract:** Mathematical notation found in ArXiv papers (e.g.,  
-Attention(Q,K,V)).  
-
-**The Concrete:** Executable code found in documentation (e.g., torch.nn.MultiheadAttention).  
-
-Standard RAG systems fail here because they treat everything as plain text. They strip LaTeX, break code indentation, and hallucinate tensor dimensions.
+### 3. Source-Grounded Citations
+No more "black box" answers. Our **Citation Engine** maps every evidence chunk to its specific source.
+- **File Name Mapping**: Identifies the exact document (e.g., `Attention_Is_All_You_Need.pdf`).
+- **Page-Level Precision**: Points to the exact page where the theory or code snippet resides.
 
 ---
 
-## 🛠️ The Solution
-
-Research-OS acts as a "Research Architect." It ingests papers and codebooks, indexes them separately using Hybrid Search, and uses a multi-step verification pipeline to ensure the code it writes actually matches the math it reads.
-
----
-
-## ✨ Key Features
-
-### 1. Math-Aware Ingestion Pipeline
-Uses pymupdf4llm to extract text while preserving LaTeX equations, Headers, and Markdown tables.  
-Semantic Segmentation: Automatically detects and separates "Theory Chunks" (text/math) from "Code Chunks" (Python implementations) during indexing.
-
-### 2. Hybrid Search Architecture
-Combines Dense Retrieval (FAISS) for semantic understanding ("How does Diffusion work?") with Sparse Retrieval (BM25) for keyword precision ("Show me the forward() function").  
-Ensures that queries retrieve both the conceptual explanation and the exact code snippet.
-
-### 3. The "Sanity Check" Verifier
-A built-in Code Sandbox that executes generated PyTorch code in a controlled environment.  
-Tensor Shape Verification: Detects dimension mismatches (e.g., passing a 3D tensor to a 2D layer) and auto-corrects or warns the user before displaying the code.
-
-### 4. Incremental Indexing
-Features a state-tracking ledger that logs processed files.  
-Adding 1 new paper to a database of 1,000 takes seconds, not hours.
-
-### 5. Local-First, Cloud-Accelerated
-Privacy: All documents and Vector Indices are stored locally.  
-Performance: Uses Groq API (Llama-3-70B) for sub-second inference, bypassing local hardware bottlenecks (16GB RAM limit).
-
----
-
-## 🏗️ Architecture
+## 🏗️ How It Works (System Flow)
 
 ```mermaid
-graph LR
-    A["PDF/Code Docs"] -->|PyMuPDF4LLM| B["Ingestion Engine"]
-    B -->|Split Code/Theory| C{"Hybrid Index"}
-    C -->|FAISS| D["Dense Vector Store"]
-    C -->|BM25| E["Sparse Keyword Index"]
+graph TD
+    User([User Query]) --> Cache{Semantic Cache Check}
+    Cache -- Match > 0.95 --> Response([Instant Cached Response])
+    Cache -- Miss --> Router{Intent Router}
     
-    U["User Query"] -->|Hybrid Search| C
-    C -->|Top-K Context| G["LLM Groq Llama3"]
-    G -->|Draft Code| V["Architecture Verifier"]
-    V -->|Pass/Fail| F["Final Answer"]
+    Router -->|Theory| TheoryDB[(Theory Vector Store)]
+    Router -->|Code| CodeDB[(Code Vector Store)]
+    Router -->|Hybrid| BothDB[(Hybrid FAISS + BM25)]
+    
+    TheoryDB & CodeDB & BothDB --> Generator[LLM Generation: Llama-3.3]
+    Generator --> Auditor{CoT Conceptual Audit}
+    Auditor -->|Verified| CitedResponse([Final Cited Response])
+    
+    subgraph "The Handshake"
+    Auditor
+    CitedResponse
+    end
 ```
 
 ---
 
-## 💻 Installation
+## ✨ Features
 
-### Prerequisites
-- Ubuntu / Linux (Recommended)  
-- Python 3.10+  
-- Groq API Key (Free tier available)  
+- **Math-Aware Ingestion**: Uses `pymupdf4llm` to preserve LaTeX equations and Markdown charts.
+- **Hybrid Search**: Fuses Dense (FAISS) and Sparse (BM25) retrieval for maximum recall.
+- **Architecture Verifier**: A built-in sandbox that executes and verifies tensor shapes in generated code.
+- **Centralized Configuration**: Managed via `src/rag/config.py` and `.env` for production-ready deployments.
+- **Streaming UI**: Modern React frontend with real-time SSE updates and interactive Source Inspector.
 
 ---
 
-### Setup
+## 💻 Tech Stack
 
-#### Clone the Repository
+- **Backend**: FastAPI, Uvicorn, Pydantic V2
+- **Frontend**: React, Tailwind CSS, Vite, Lucide Icons
+- **Vector Engine**: FAISS-cpu, FastEmbed (Nomic)
+- **Keyword Search**: Rank_BM25
+- **LLM Context**: Groq API (Llama-3.3-70B)
+- **Persistence**: Hybrid Ledger (JSON) + Vector Index
+
+---
+
+## 🛠️ Installation & Setup
+
+### 1. Prerequisites
+- Python 3.10+
+- Node.js & npm (for modern frontend)
+- Groq API Key
+
+### 2. Environment Configuration
+Create a `.env` file in the root directory:
 ```bash
-git clone https://github.com/sharansh-22/Research-OS.git
-cd Research-OS
+GROQ_API_KEY="gsk_..."
+RESEARCH_OS_API_KEY="your-secret-key"
 ```
 
-#### Create Environment
+### 3. Build & Run
+The simplest way to start the entire ecosystem:
 ```bash
-conda create -n research-os python=3.10
-conda activate research-os
-```
-
-#### Install Dependencies
-```bash
+# Install Python deps
 pip install -r requirements.txt
-```
 
-#### Configure Environment
-Create a .env file (or export in terminal) with your API key:
-
-```bash
-export GROQ_API_KEY="gsk_your_key_here"
+# Start Backend + Frontend + Browser
+python webrun.py
 ```
 
 ---
 
-## 📖 Usage
+## 📖 Commands Reference
 
-### 1. Build the Knowledge Base (The Builder)
-Download your papers/books into the data/ directory and run the ingestion script. This runs locally on your CPU.
-
-```bash
-python scripts/ingest_batch.py
-```
-
-**Note:** Thanks to incremental indexing, this only processes new files on subsequent runs.
-
----
-
-### 2. Chat with the Architect (The Player)
-Start the CLI assistant.
-
-```bash
-python main.py
-```
-
-**Example Query:**
-
-"Explain the difference between Batch Norm and Layer Norm mathematically, and provide a PyTorch implementation for Layer Norm."
-
----
-
-## 🧰 Tech Stack
-
-- **Ingestion:** pymupdf4llm (PDF to Markdown)  
-- **Embeddings:** fastembed (CPU-optimized, Nomic-Embed)  
-- **Vector DB:** faiss-cpu (Dense Search)  
-- **Keyword Search:** rank_bm25 (Sparse Search)  
-- **LLM Inference:** Groq API (Llama-3-70B)  
-- **Orchestration:** Custom Python Pipeline (No LangChain bloat)  
+Check [COMMANDS.md](file:///home/sharansh/Research-OS/COMMANDS.md) for a full list of CLI and API operations, including:
+- `python main.py` (Interactive CLI Chat)
+- `python evaluate.py` (Accuracy Report Card Generation)
+- `python verify_setup.py` (Global System Check)
 
 ---
 
 ## 🗺️ Roadmap
-
-- Math-Aware Ingestion  # 🧠 Research-OS
-
-<p align="center">
-
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
-![License](https://img.shields.io/badge/License-Available-green)
-![Status](https://img.shields.io/badge/Status-Active-success)
-![Backend](https://img.shields.io/badge/Backend-RAG%20Engine-orange)
-
-</p>
-
-## The Research Orchestration System for Machine Learning
-
-**Python**  
-**License**  
-**Status**  
-**Backend**
+- [x] Math-Aware Ingestion
+- [x] Semantic Query Caching
+- [x] CoT Conceptual Audit
+- [x] Precise Metadata Citations
+- [ ] Multi-Agent Research Loops
+- [ ] Export to LaTeX/PDF Reports
 
 ---
-
-Research-OS is a specialized Retrieval-Augmented Generation (RAG) engine designed to bridge the gap between Mathematical Theory (Research Papers) and Python Implementation (Source Code).
-
-Unlike generic "Chat with PDF" tools, Research-OS treats code and mathematics as distinct data types. It preserves LaTeX formatting, enforces code integrity, and verifies generated architectures against runtime errors.
-
----
-
-## 🚀 The Problem
-
-Machine Learning research involves two distinct languages:
-
-**The Abstract:** Mathematical notation found in ArXiv papers (e.g.,  
-Attention(Q,K,V)).  
-
-**The Concrete:** Executable code found in documentation (e.g., torch.nn.MultiheadAttention).  
-
-Standard RAG systems fail here because they treat everything as plain text. They strip LaTeX, break code indentation, and hallucinate tensor dimensions.
-
----
-
-## 🛠️ The Solution
-
-Research-OS acts as a "Research Architect." It ingests papers and codebooks, indexes them separately using Hybrid Search, and uses a multi-step verification pipeline to ensure the code it writes actually matches the math it reads.
-
----
-
-## ✨ Key Features
-
-### 1. Math-Aware Ingestion Pipeline
-Uses pymupdf4llm to extract text while preserving LaTeX equations, Headers, and Markdown tables.  
-Semantic Segmentation: Automatically detects and separates "Theory Chunks" (text/math) from "Code Chunks" (Python implementations) during indexing.
-
-### 2. Hybrid Search Architecture
-Combines Dense Retrieval (FAISS) for semantic understanding ("How does Diffusion work?") with Sparse Retrieval (BM25) for keyword precision ("Show me the forward() function").  
-Ensures that queries retrieve both the conceptual explanation and the exact code snippet.
-
-### 3. The "Sanity Check" Verifier
-A built-in Code Sandbox that executes generated PyTorch code in a controlled environment.  
-Tensor Shape Verification: Detects dimension mismatches (e.g., passing a 3D tensor to a 2D layer) and auto-corrects or warns the user before displaying the code.
-
-### 4. Incremental Indexing
-Features a state-tracking ledger that logs processed files.  
-Adding 1 new paper to a database of 1,000 takes seconds, not hours.
-
-### 5. Local-First, Cloud-Accelerated
-Privacy: All documents and Vector Indices are stored locally.  
-Performance: Uses Groq API (Llama-3-70B) for sub-second inference, bypassing local hardware bottlenecks (16GB RAM limit).
-
----
-
-## 🏗️ Architecture
-
-```mermaid
-graph LR
-    A["PDF/Code Docs"] -->|PyMuPDF4LLM| B["Ingestion Engine"]
-    B -->|Split Code/Theory| C{"Hybrid Index"}
-    C -->|FAISS| D["Dense Vector Store"]
-    C -->|BM25| E["Sparse Keyword Index"]
-    
-    U["User Query"] -->|Hybrid Search| C
-    C -->|Top-K Context| G["LLM Groq Llama3"]
-    G -->|Draft Code| V["Architecture Verifier"]
-    V -->|Pass/Fail| F["Final Answer"]
-```
-
----
-
-## 💻 Installation
-
-### Prerequisites
-- Ubuntu / Linux (Recommended)  
-- Python 3.10+  
-- Groq API Key (Free tier available)  
-
----
-
-### Setup
-
-#### Clone the Repository
-```bash
-git clone https://github.com/sharansh-22/Research-OS.git
-cd Research-OS
-```
-
-#### Create Environment
-```bash
-conda create -n research-os python=3.10
-conda activate research-os
-```
-
-#### Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-#### Configure Environment
-Create a .env file (or export in terminal) with your API key:
-
-```bash
-export GROQ_API_KEY="gsk_your_key_here"
-```
-
----
-
-## 📖 Usage
-
-### 1. Build the Knowledge Base (The Builder)
-Download your papers/books into the data/ directory and run the ingestion script. This runs locally on your CPU.
-
-```bash
-python scripts/ingest_batch.py
-```
-
-**Note:** Thanks to incremental indexing, this only processes new files on subsequent runs.
-
----
-
-### 2. Chat with the Architect (The Player)
-Start the CLI assistant.
-
-```bash
-python main.py
-```
-
-**Example Query:**
-
-"Explain the difference between Batch Norm and Layer Norm mathematically, and provide a PyTorch implementation for Layer Norm."
-
----
-
-## 🧰 Tech Stack
-
-- **Ingestion:** pymupdf4llm (PDF to Markdown)  
-- **Embeddings:** fastembed (CPU-optimized, Nomic-Embed)  
-- **Vector DB:** faiss-cpu (Dense Search)  
-- **Keyword Search:** rank_bm25 (Sparse Search)  
-- **LLM Inference:** Groq API (Llama-3-70B)  
-- **Orchestration:** Custom Python Pipeline (No LangChain bloat)  
-
----
-
-## 🗺️ Roadmap
-
-- Math-Aware Ingestion  ✅
-- Hybrid Search (FAISS + BM25) ✅  
-- Runtime Code Verification  ✅
-- FastAPI Backend: Expose RAG pipeline via REST endpoints.  
-- Streamlit UI: Dual-pane interface (Chat on left, Source PDF view on right).  
-- Ragas Evaluation: Automated benchmarking of retrieval precision.
+*Developed by the Research-OS Team. Designed for high-fidelity machine learning engineering.*
