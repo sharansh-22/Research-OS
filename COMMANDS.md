@@ -175,7 +175,34 @@ ollama rm <model_name>                        # remove model
 ollama run phi3:mini "Hello"
 
 # =============================================================================
-# 8. GIT
+# 8. BENCHMARK SUITE (Research-OS vs Vanilla RAG)
+# =============================================================================
+
+# Run full benchmark — compares Research-OS (Auditor + Cache) vs Vanilla RAG
+python3 run_benchmark.py                      # uses benchmark/test_set.json
+
+# Custom test set
+python3 run_benchmark.py --test-set path/to/custom_test_set.json
+
+# Custom output path
+python3 run_benchmark.py --output path/to/report.md
+
+# Raw results only (skip report generation)
+python3 run_benchmark.py --results-only
+
+# Environment variables (optional overrides):
+# export BENCHMARK_HALLUC_THRESHOLD=0.5       # faithfulness below this = hallucination
+# export BENCHMARK_AUDITOR_PASS=0.7           # auditor above this = intervention success
+
+# Outputs:
+#   benchmark/results.json          — raw per-query results
+#   benchmark/comparison_report.md  — formatted head-to-head report
+
+# View the comparison report
+cat benchmark/comparison_report.md
+
+# =============================================================================
+# 9. GIT
 # =============================================================================
 
 git status
@@ -185,7 +212,7 @@ git push origin main
 git pull origin main
 
 # =============================================================================
-# 9. COMMON WORKFLOWS
+# 10. COMMON WORKFLOWS
 # =============================================================================
 
 # --- Workflow A: Daily use ---

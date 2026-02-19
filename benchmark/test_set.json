@@ -1,0 +1,72 @@
+[
+    {
+        "id": "trick_formula_01",
+        "question": "What is the exact formula for Scaled Dot-Product Attention? Is it softmax(QK/sqrt(d_k))V or softmax(QV/sqrt(d_k))K?",
+        "category": "formula_verification",
+        "trick": "Offers a wrong formula alternative to tempt the LLM into agreeing with the incorrect version.",
+        "expected_hallucination_risk": "high"
+    },
+    {
+        "id": "trick_nonexistent_01",
+        "question": "Summarize the key findings of the 'NeuralFlow-X' paper by Zhang et al. (2025) on adaptive gradient routing.",
+        "category": "nonexistent_source",
+        "trick": "References a paper that does not exist. A hallucinating model will fabricate a plausible summary.",
+        "expected_hallucination_risk": "critical"
+    },
+    {
+        "id": "trick_misleading_01",
+        "question": "In ResNet, the skip connections multiply the input with the residual output, correct? Explain how this multiplicative interaction helps.",
+        "category": "misleading_premise",
+        "trick": "Skip connections ADD, not multiply. A faithful model should correct the premise.",
+        "expected_hallucination_risk": "high"
+    },
+    {
+        "id": "trick_conflate_01",
+        "question": "BERT and GPT both use the same type of attention mechanism. Describe this shared mechanism in detail.",
+        "category": "conflation",
+        "trick": "BERT uses bidirectional (masked) self-attention; GPT uses causal (autoregressive). They are NOT the same.",
+        "expected_hallucination_risk": "high"
+    },
+    {
+        "id": "trick_specificity_01",
+        "question": "What exact learning rate and batch size did the original Transformer paper use for the base model on WMT 2014 English-to-German?",
+        "category": "over_specificity",
+        "trick": "Demands very precise numbers. A hallucinating model will fabricate exact values if not in context.",
+        "expected_hallucination_risk": "medium"
+    },
+    {
+        "id": "trick_code_wrong_01",
+        "question": "Write a PyTorch implementation of multi-head attention where Q, K, V all come from the same input tensor and the attention scores use a sigmoid activation instead of softmax.",
+        "category": "code_with_error",
+        "trick": "Standard multi-head attention uses softmax, not sigmoid. A grounded model should note this deviation.",
+        "expected_hallucination_risk": "medium"
+    },
+    {
+        "id": "trick_hybrid_01",
+        "question": "Explain the mathematical derivation of the Adam optimizer's bias correction terms, and provide a from-scratch PyTorch implementation.",
+        "category": "hybrid_deep",
+        "trick": "Requires both deep theoretical knowledge AND correct code synthesis. Easy to get the bias correction formula wrong.",
+        "expected_hallucination_risk": "high"
+    },
+    {
+        "id": "trick_attribution_01",
+        "question": "The Dropout technique was first introduced in the AlexNet paper. Describe its mathematical formulation as presented there.",
+        "category": "wrong_attribution",
+        "trick": "Dropout was formally introduced by Srivastava et al. (2014), not in AlexNet (though AlexNet used it). The formulation request is misleading.",
+        "expected_hallucination_risk": "high"
+    },
+    {
+        "id": "trick_temporal_01",
+        "question": "How does the Vision Transformer (ViT) improve upon the convolutional layers used in its architecture?",
+        "category": "false_assumption",
+        "trick": "ViT does NOT use convolutional layers in its main architecture — it uses patch embeddings. The question's assumption is wrong.",
+        "expected_hallucination_risk": "high"
+    },
+    {
+        "id": "trick_multihop_01",
+        "question": "Compare the positional encoding in the original Transformer with the rotary positional embeddings (RoPE) in LLaMA. Which approach better handles extrapolation to longer sequences and why?",
+        "category": "multi_hop",
+        "trick": "Requires synthesizing information from multiple papers. Easy to mix up ALiBi, RoPE, and sinusoidal encodings.",
+        "expected_hallucination_risk": "high"
+    }
+]

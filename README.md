@@ -104,7 +104,7 @@ python webrun.py
 
 ## 📖 Commands Reference
 
-Check [COMMANDS.md](file:///home/sharansh/Research-OS/COMMANDS.md) for a full list of CLI and API operations, including:
+Check [COMMANDS.md]for a full list of CLI and API operations, including:
 - `python main.py` (Interactive CLI Chat)
 - `python evaluate.py` (Accuracy Report Card Generation)
 - `python verify_setup.py` (Global System Check)

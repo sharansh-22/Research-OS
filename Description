@@ -1,0 +1,84 @@
+# Research-OS (v2.1.0): Technical Specification
+
+Research-OS is a specialized, fully-auditable RAG (Retrieval-Augmented Generation) system optimized for high-fidelity technical analysis within 16GB RAM constraints. It prioritizes deterministic mathematical grounding and source traceability over creative synthesis.
+
+---
+
+## 🔴 CRITICAL AUDIT RESPONSE
+
+### 1. Project Status & Usage
+Research-OS (v2.1.0) is currently an **Internal Research Prototype**. 
+- **Production Status**: Zero production deployments. It is designed for researchers and engineers as a "Personal Knowledge Assistant."
+- **Validation**: User testimonials and real-world query logs are currently limited to internal developer trials.
+
+### 2. Benchmarks & Comparisons
+Research-OS is built for **Local-First Technical Accuracy**, not broad generalization.
+- **Vs Commercial (GPT-4/Perplexity)**: Research-OS offers lower cost (~100x cheaper per query via Groq) and guaranteed local data privacy. It lacks the broad knowledge base of GPT-4 but excels in local repository/PDF depth.
+- **Vs Open Source (LangChain/LlamaIndex)**: Focuses on a rigid "Verification Layer" (NLI-based) rather than flexible generic agents.
+- **Dataset**: TREC/MS MARCO performance is estimated relative to the `ms-marco-MiniLM-L-6-v2` encoder performance.
+
+### 3. Validated Benchmark Metrics
+Metrics are calculated using the `scripts/evaluate.py` framework on a "Golden Technical Set" (9 samples from papers like 'Attention Is All You Need').
+| Metric | Score | Definition |
+| :--- | :--- | :--- |
+| **Mean Faithfulness** | **0.86** | Audited via `nli-deberta-v3-xsmall` (Entailment check). |
+| **Mean Relevancy** | **1.00** | Sigmoid-normalized score from `ms-marco-MiniLM`. |
+| **Mean Groundedness** | **0.89** | Verification of citations against MD5-hashed ledger. |
+| **Latency (Cache)** | **<50ms** | Semantic hit with 0.95 similarity threshold. |
+| **Latency (Full)** | **500ms - 2s** | End-to-end retrieval + Llama-3.3-70B (Groq) generation. |
+
+> [!CAUTION]
+> A "Perfect" Relevancy score (1.00) indicates the test set is currently optimized for known technical papers. OOD (Out-of-Distribution) testing is on the roadmap.
+
+### 4. Cost Analysis
+- **Inference**: ~$0.00059 / 1K tokens (via Groq Llama-3.3-70B).
+- **Storage**: Near-zero (Local FAISS index size is ~10MB per 100K tokens).
+- **TCO**: For 1M queries/month, estimated cost is ~$700 (API only).
+
+---
+
+## 🟠 MAJOR TECHNICAL DETAILS
+
+### 5. Ablation & Failure Modes
+- **Hybrid Retrieval**: BM25 (sparse) + FAISS (dense) via Reciprocal Rank Fusion (RRF). RRF ensures that rare keywords (math symbols) are prioritized alongside semantic meaning.
+- **Graceful Degradation**: 
+  - If similarity < 0.25, system injects a "Synthesis Note" warning the user of potential hallucinations.
+  - If 0 chunks retrieved, system returns "Insufficient context detected."
+
+### 6. Scalability & Hardware
+- **Target Hardware**: 16GB RAM, consumer-grade CPU. GPU is optional for encoders.
+- **Corpus Limit**: Tested up to 10K chunks; indexing scales linearly with FAISS.
+- **Multi-Modal**: Support for **LaTeX, Tables, and Math** via `pymupdf4llm`. No native OCR/Image-to-text; images are currently ignored.
+
+### 7. Security & Privacy
+- **Local-First**: Documents and FAISS indices stay on-disk.
+- **Isolation**: Single-tenant usage. No multi-tenant encryption at rest.
+- **Access Control**: API Key authentication (`RESEARCH_OS_API_KEY`).
+
+---
+
+## 🟡 IMPLEMENTATION NOTES
+
+### 8. API & Dependency Management
+- **Endpoints**:
+  - `POST /v1/chat`: Streaming SSE chat with audit badges.
+  - `POST /v1/ingest/file`: Supports PDF, Py, Notebooks, TeX.
+  - `GET /health`: System stats and backend status.
+- **Dependencies**: Pinned in `requirements.txt` (Python 3.10+).
+
+### 9. Configuration Tuning
+Adjustable via `src/rag/config.py`:
+- `DEFAULT_TOP_K = 5`
+- `DEFAULT_MIN_SIMILARITY = 0.25`
+- `CACHE_SIMILARITY_THRESHOLD = 0.95`
+- `DEFAULT_TEMPERATURE = 0.3` (Optimized for deterministic technical writing).
+
+---
+
+## 🔵 POLISH & COMMUNITY
+- **License**: MIT License ([LICENSE](./LICENSE)).
+- **Roadmap**: 
+  - [ ] Broad OOD benchmark (MS MARCO).
+  - [ ] Multi-tenant data isolation.
+  - [ ] Graph-based entity extraction.
+- **Support**: Report issues via project GitHub repository.
