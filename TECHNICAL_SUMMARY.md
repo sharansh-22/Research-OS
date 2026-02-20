@@ -157,10 +157,9 @@ If the generated response contains Python code blocks, the verifier:
 5. Returns `VerificationResult` with `{success, output, error, shapes, execution_time}`.
 
 This provides a concrete, executable check: does the generated code actually run, and do the tensor dimensions match what the theory predicts?
-
 **Known Limitations**:
 
-- **Platform Constraint**: The timeout mechanism uses `signal.SIGALRM`, which is a POSIX-only signal. This means the `ArchitectureVerifier` **will not function on Windows**. Cross-platform alternatives — such as `multiprocessing` with a timeout, the `timeout-decorator` library, or `threading.Timer` with forced thread termination — should be evaluated for Windows deployment targets. The current implementation assumes a Linux/macOS runtime, consistent with the system's target environment (16 GB RAM CPU-only server).
+- **Platform Constraint**: The timeout mechanism uses `signal.SIGALRM`, which is a POSIX-only signal. This means the `ArchitectureVerifier` **will not function on Windows**. Cross-platform alternatives — such as `multiprocessing` with `Process.terminate()` or third-party libraries like `timeout-decorator` — should be evaluated for Windows deployment targets. Note that Python's `threading` module does not support safe mid-execution thread termination. The current implementation assumes a Linux/macOS runtime, consistent with the system's target environment (16 GB RAM CPU-only server).
 
 - **Security Denylist Coverage**: The current pattern-based denylist catches direct attribute access (`os.`, `subprocess.`) but does not cover all attack vectors. Known gaps include:
   - **Import-based access**: `import os`, `import subprocess`, `__import__('os')` bypass the attribute-access regex.
@@ -169,7 +168,6 @@ This provides a concrete, executable check: does the generated code actually run
   - **System introspection**: `sys.exit()`, `sys.modules` manipulation.
   
   For hardened deployments, the denylist should be replaced with a proper sandboxing solution such as `RestrictedPython`, `nsjail`, or execution within an isolated container. The current implementation is designed for a controlled, single-user research environment where the code being verified is LLM-generated from trusted context — not for arbitrary untrusted code execution.
-
 ### 2.3 Orchestration: The `ResearchPipeline`
 
 The `ResearchPipeline` class serves as the composition root. It wires all components together and exposes two query entry points:

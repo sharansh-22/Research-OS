@@ -152,7 +152,7 @@ The CoT Auditor successfully caught **2 out of 4** Vanilla RAG hallucinations:
 - **Math-Aware Ingestion**: Uses `pymupdf4llm` to preserve LaTeX equations and Markdown charts across 6 file formats (PDF, Python, Jupyter, Markdown, LaTeX, C++/CUDA).
 - **Hybrid Search**: Fuses Dense (FAISS `IndexFlatIP`, 384-d) and Sparse (BM25Okapi) retrieval with RRF and cross-encoder reranking.
 - **Dual-Channel Verification**: Independent NLI (DeBERTa-v3) + LLM (CoT Auditor) guardrails catch both sentence-level and conceptual-level hallucinations.
-- **Architecture Verifier**: Built-in sandbox that executes generated code and extracts tensor shapes — safety-gated with pattern denylist and SIGALRM timeout.
+- **Architecture Verifier**: Built-in sandbox that executes generated code and extracts tensor shapes — safety-gated with pattern denylist and SIGALRM timeout (Linux/macOS only; `SIGALRM` is a POSIX signal not available on Windows).
 - **Long-Term Memory**: Conversation history beyond 3 turns is summarized into a context string appended to the system prompt.
 - **Hallucination Source Stripping**: Regex-based guard detects and removes LLM-fabricated "Sources" sections; citations come exclusively from retrieval metadata.
 - **Centralized Configuration**: Managed via `src/rag/config.py` and `.env` with environment variable overrides for all parameters.
